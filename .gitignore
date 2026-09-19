@@ -5,3 +5,8 @@ dist-electron
 *.log
 .DS_Store
 *.tsbuildinfo
+
+# Secrets (GH_TOKEN for releases) — never commit
+.env
+.env.*
+!.env.example

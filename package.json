@@ -11,7 +11,7 @@
     "start": "electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "dist": "npm run build && electron-builder --win --publish never",
-    "release": "npm run build && electron-builder --win --publish always",
+    "release": "node scripts/release.js",
     "sign:vmp": "python -m castlabs_evs.vmp sign-pkg node_modules/electron/dist"
   },
   "dependencies": {
