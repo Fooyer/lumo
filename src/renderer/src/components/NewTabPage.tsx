@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import type { Bookmark } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
+import { useSuggestions } from '../lib/useSuggestions'
 
 interface Props {
   bookmarks: Bookmark[]
@@ -14,6 +15,18 @@ type DragZone = 'before' | 'after'
 export default function NewTabPage({ bookmarks, totalMemoryMB, onNavigate, onOpenNewTab }: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
+  const [focused, setFocused] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const suggestions = useSuggestions({
+    value,
+    setValue,
+    inputRef,
+    enabled: focused,
+    anchorRef: formRef,
+    owner: 'new-tab',
+    onPick: onNavigate
+  })
   const visible = bookmarks.slice(0, 8)
 
   return (
@@ -22,19 +35,26 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, onNavigate, onOpe
       <div className="new-tab__logo">Lumo</div>
 
       <form
+        ref={formRef}
         className="new-tab__search"
         onSubmit={(e) => {
           e.preventDefault()
-          if (value.trim()) onNavigate(value.trim())
+          const target = suggestions.selected?.url ?? value.trim()
+          if (target) onNavigate(target)
         }}
       >
         <input
+          ref={inputRef}
           autoFocus
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={suggestions.onChange}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
+          onKeyDown={suggestions.onKeyDown}
           placeholder="Pesquisar ou digitar uma URL…"
         />
       </form>
+
 
       {visible.length > 0 && (
         <div className="new-tab__grid">

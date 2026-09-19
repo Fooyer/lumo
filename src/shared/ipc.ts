@@ -17,9 +17,9 @@ export const IPC = {
   navigate: 'navigate:smart',
   tabsUpdated: 'tabs:updated',
   memoryUpdated: 'memory:updated',
+  memoryGet: 'memory:get',
   aiStatus: 'ai:status',
-  uiToolbarHeight: 'ui:toolbar-height',
-  uiPanelWidth: 'ui:panel-width',
+  uiContentBounds: 'ui:content-bounds',
   tabsToggleDevtools: 'tabs:toggle-devtools',
   windowMinimize: 'window:minimize',
   windowToggleMaximize: 'window:toggle-maximize',
@@ -27,6 +27,7 @@ export const IPC = {
   windowMaximizedChanged: 'window:maximized-changed',
   settingsGet: 'settings:get',
   settingsSet: 'settings:set',
+  settingsChanged: 'settings:changed',
   settingsFlyoutToggle: 'settings:flyout-toggle',
   settingsFlyoutClose: 'settings:flyout-close',
   settingsFlyoutChanged: 'settings:flyout-changed',
@@ -48,12 +49,30 @@ export const IPC = {
   downloadsFlyoutClose: 'downloads:flyout-close',
   downloadsFlyoutChanged: 'downloads:flyout-changed',
   downloadsFlyoutShow: 'downloads:flyout-show',
-  passwordsList: 'passwords:list',
-  passwordsReveal: 'passwords:reveal',
-  passwordsRemove: 'passwords:remove',
-  passwordsUpdated: 'passwords:updated',
+  historyList: 'history:list',
+  historyRemove: 'history:remove',
+  historyClear: 'history:clear',
+  historyChanged: 'history:changed',
+  historySuggest: 'history:suggest',
+  suggestionsFlyoutShow: 'suggestions:flyout-show',
+  suggestionsFlyoutHide: 'suggestions:flyout-hide',
+  suggestionsFlyoutState: 'suggestions:flyout-state',
+  suggestionsFlyoutPick: 'suggestions:flyout-pick',
+  suggestionsFlyoutHover: 'suggestions:flyout-hover',
+  suggestionPicked: 'suggestions:picked',
+  suggestionHovered: 'suggestions:hovered',
+  updateGet: 'update:get',
+  updateCheck: 'update:check',
+  updateInstall: 'update:install',
+  updateStatus: 'update:status',
   appRelaunch: 'app:relaunch',
+  defaultBrowserGet: 'defaultbrowser:get',
+  defaultBrowserSet: 'defaultbrowser:set',
+  cacheGetSize: 'cache:get-size',
+  cacheClear: 'cache:clear',
   alertDialogShow: 'dialog:alert-show',
+  certWarningShow: 'dialog:cert-show',
+  certWarningRespond: 'dialog:cert-respond',
   setModalActive: 'ui:set-modal-active'
 } as const
 
@@ -99,6 +118,13 @@ export interface ThemeSettings {
   bg: string
 }
 
+export interface DefaultBrowserStatus {
+  supported: boolean
+  isDefault: boolean
+}
+
+export type TabLayout = 'top' | 'left' | 'right' | 'bottom'
+
 export interface Settings {
   memorySaverEnabled: boolean
   idleSuspendMinutes: number
@@ -106,14 +132,24 @@ export interface Settings {
   showBookmarksBar: boolean
   theme: ThemeSettings
   hardwareAccelerationEnabled: boolean
-  autofillPasswordsEnabled: boolean
-  autoSavePasswordsEnabled: boolean
+  tabLayout: TabLayout
+  sidebarCollapsed: boolean
+  restoreSession: boolean
+  /** Look for new versions on GitHub in the background (a manual check is always available). */
+  autoUpdate: boolean
 }
 
 export interface AlertDialogPayload {
   id: string
   message: string
   domain: string
+}
+
+export interface CertWarningPayload {
+  id: string
+  url: string
+  host: string
+  error: string
 }
 
 export interface Bookmark {
@@ -124,11 +160,83 @@ export interface Bookmark {
   createdAt: number
 }
 
-export interface SavedPassword {
+/** A page the user has visited, aggregated across visits. */
+export interface HistoryPage {
+  url: string
+  title: string
+  favicon: string | null
+  visitCount: number
+  lastVisitAt: number
+}
+
+export interface HistoryVisit {
   id: string
-  domain: string
-  username: string
-  updatedAt: number
+  url: string
+  visitedAt: number
+}
+
+export interface HistoryEntry {
+  id: string
+  url: string
+  title: string
+  favicon: string | null
+  visitedAt: number
+}
+
+export interface HistoryListResult {
+  items: HistoryEntry[]
+  /** How many visits match, including those beyond the requested limit. */
+  total: number
+}
+
+export interface Suggestion {
+  url: string
+  title: string
+  favicon: string | null
+  source: 'history' | 'bookmark'
+  visitCount: number
+}
+
+/** What the suggestions flyout window draws. `owner` identifies the input that asked for it. */
+export interface SuggestionsFlyoutState {
+  owner: string
+  items: Suggestion[]
+  activeIndex: number
+}
+
+export interface SuggestionsFlyoutShow extends SuggestionsFlyoutState {
+  /** The input the list drops down from, in the main window's client coordinates. */
+  anchor: AnchorBounds
+}
+
+export interface SuggestionEvent {
+  owner: string
+}
+
+export interface SuggestionPickedEvent extends SuggestionEvent {
+  url: string
+}
+
+export interface SuggestionHoverEvent extends SuggestionEvent {
+  index: number
+}
+
+/** The flyout window is sized from these, so the list's CSS rows must match them exactly. */
+export const SUGGESTION_ROW_HEIGHT = 36
+/** Vertical space around the rows: 6px padding + 1.5px border, top and bottom. */
+export const SUGGESTIONS_FLYOUT_CHROME = 15
+
+export type UpdateState = 'idle' | 'unsupported' | 'checking' | 'up-to-date' | 'downloading' | 'ready' | 'error'
+
+export interface UpdateStatus {
+  state: UpdateState
+  currentVersion: string
+  /** The new version, once one was found. */
+  version?: string
+  /** Download progress, 0-100. */
+  percent?: number
+  error?: string
+  checkedAt?: number
 }
 
 export type DownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted'

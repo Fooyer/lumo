@@ -12,8 +12,10 @@ const DEFAULTS: Settings = {
     bg: '#14151d'
   },
   hardwareAccelerationEnabled: true,
-  autofillPasswordsEnabled: true,
-  autoSavePasswordsEnabled: true
+  tabLayout: 'top',
+  sidebarCollapsed: false,
+  restoreSession: true,
+  autoUpdate: true
 }
 
 export class SettingsStore {

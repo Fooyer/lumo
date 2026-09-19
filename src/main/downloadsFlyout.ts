@@ -1,7 +1,8 @@
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { IPC, type AnchorBounds } from '../shared/ipc'
+import { positionFlyout } from './flyoutPosition'
 
 const FLYOUT_WIDTH = 380
 const FLYOUT_HEIGHT = 460
@@ -84,28 +85,10 @@ export class DownloadsFlyout {
     }
     if (!this.win) return
 
-    const parentBounds = this.parent.getContentBounds()
-    let popupX: number
-    let popupY: number
-
-    if (anchorBounds) {
-      const anchorRight = parentBounds.x + anchorBounds.x + anchorBounds.width
-      const anchorBottom = parentBounds.y + anchorBounds.y + anchorBounds.height
-      popupX = Math.round(anchorRight - FLYOUT_WIDTH)
-      popupY = Math.round(anchorBottom + 4)
-    } else {
-      popupX = Math.round(parentBounds.x + parentBounds.width - FLYOUT_WIDTH - 12)
-      popupY = Math.round(parentBounds.y + 78)
-    }
-
-    const display = screen.getDisplayMatching(parentBounds)
-    const workArea = display.workArea
-    if (popupX + FLYOUT_WIDTH > workArea.x + workArea.width) {
-      popupX = workArea.x + workArea.width - FLYOUT_WIDTH - 8
-    }
-    if (popupX < workArea.x) {
-      popupX = workArea.x + 8
-    }
+    const { x: popupX, y: popupY } = positionFlyout(this.parent, anchorBounds, {
+      width: FLYOUT_WIDTH,
+      height: FLYOUT_HEIGHT
+    })
 
     this.win.setBounds({
       x: popupX,

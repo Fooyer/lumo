@@ -8,6 +8,7 @@ const HISTORY_LIMIT = 200
 export class DownloadsManager {
   private items: DownloadItem[]
   private electronItems = new Map<string, ElectronDownloadItem>()
+  private sources = new Map<string, Electron.WebContents>()
   private onUpdate: () => void = () => {}
 
   constructor(
@@ -15,7 +16,13 @@ export class DownloadsManager {
     ses: Electron.Session = session.defaultSession
   ) {
     this.items = this.load()
-    ses.on('will-download', (_event, item) => this.trackDownload(item))
+    ses.on('will-download', (_event, item, webContents) => this.trackDownload(item, webContents))
+  }
+
+  /** True while a download started by this page is still in flight (closing the page would abort it). */
+  isDownloadingFrom(webContents: Electron.WebContents): boolean {
+    for (const source of this.sources.values()) if (source === webContents) return true
+    return false
   }
 
   private load(): DownloadItem[] {
@@ -39,7 +46,7 @@ export class DownloadsManager {
     this.onUpdate = cb
   }
 
-  private trackDownload(item: ElectronDownloadItem): void {
+  private trackDownload(item: ElectronDownloadItem, webContents: Electron.WebContents): void {
     const id = randomUUID()
     const entry: DownloadItem = {
       id,
@@ -54,6 +61,7 @@ export class DownloadsManager {
     this.items.unshift(entry)
     this.items = this.items.slice(0, HISTORY_LIMIT)
     this.electronItems.set(id, item)
+    this.sources.set(id, webContents)
     this.onUpdate()
     this.save()
 
@@ -70,6 +78,7 @@ export class DownloadsManager {
       entry.receivedBytes = item.getReceivedBytes()
       entry.savePath = item.getSavePath()
       this.electronItems.delete(id)
+      this.sources.delete(id)
       this.onUpdate()
       this.save()
     })

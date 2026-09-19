@@ -9,11 +9,15 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "npm run build && electron-builder --win --publish never",
+    "release": "npm run build && electron-builder --win --publish always",
+    "sign:vmp": "python -m castlabs_evs.vmp sign-pkg node_modules/electron/dist"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
     "@fontsource-variable/nunito": "5.3.0",
+    "electron-updater": "^6.8.9",
     "lucide-react": "1.47.0"
   },
   "devDependencies": {
@@ -21,7 +25,8 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^33.2.1",
+    "electron": "git+https://github.com/castlabs/electron-releases.git#v33.4.11+wvcus",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -29,7 +34,7 @@
     "vite": "^5.4.11"
   },
   "allowScripts": {
-    "electron@33.4.11": true,
+    "electron@33.4.11+wvcus": true,
     "esbuild@0.21.5": true
   }
 }

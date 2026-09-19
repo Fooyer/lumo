@@ -7,8 +7,16 @@ import {
   type Settings,
   type Bookmark,
   type DownloadItem,
-  type SavedPassword,
   type AlertDialogPayload,
+  type CertWarningPayload,
+  type DefaultBrowserStatus,
+  type HistoryListResult,
+  type Suggestion,
+  type UpdateStatus,
+  type SuggestionsFlyoutShow,
+  type SuggestionsFlyoutState,
+  type SuggestionPickedEvent,
+  type SuggestionHoverEvent,
   type AnchorBounds
 } from '../shared/ipc'
 
@@ -35,6 +43,11 @@ const api = {
   getSettings: (): Promise<Settings> => ipcRenderer.invoke(IPC.settingsGet),
   setSettings: (partial: Partial<Settings>): Promise<Settings> =>
     ipcRenderer.invoke(IPC.settingsSet, partial),
+  onSettingsChanged: (cb: (settings: Settings) => void) => {
+    const listener = (_e: unknown, settings: Settings): void => cb(settings)
+    ipcRenderer.on(IPC.settingsChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.settingsChanged, listener)
+  },
   toggleSettingsFlyout: (anchorBounds?: AnchorBounds): void =>
     ipcRenderer.send(IPC.settingsFlyoutToggle, anchorBounds),
   closeSettingsFlyout: (): void =>
@@ -69,8 +82,7 @@ const api = {
       ipcRenderer.removeListener(IPC.settingsOpenFull, listener)
     }
   },
-  setToolbarHeight: (px: number): void => ipcRenderer.send(IPC.uiToolbarHeight, px),
-  setPanelWidth: (px: number): void => ipcRenderer.send(IPC.uiPanelWidth, px),
+  setContentBounds: (rect: AnchorBounds): void => ipcRenderer.send(IPC.uiContentBounds, rect),
   toggleDevTools: (id: string): Promise<void> => ipcRenderer.invoke(IPC.tabsToggleDevtools, id),
 
   minimizeWindow: (): void => ipcRenderer.send(IPC.windowMinimize),
@@ -94,6 +106,40 @@ const api = {
     ipcRenderer.on(IPC.bookmarksUpdated, listener)
     return () => ipcRenderer.removeListener(IPC.bookmarksUpdated, listener)
   },
+
+  listHistory: (query: string, limit: number): Promise<HistoryListResult> =>
+    ipcRenderer.invoke(IPC.historyList, query, limit),
+  removeHistoryVisit: (id: string): Promise<void> => ipcRenderer.invoke(IPC.historyRemove, id),
+  clearHistory: (): Promise<void> => ipcRenderer.invoke(IPC.historyClear),
+  suggestPages: (query: string): Promise<Suggestion[]> => ipcRenderer.invoke(IPC.historySuggest, query),
+  onHistoryChanged: (cb: () => void) => {
+    const listener = (): void => cb()
+    ipcRenderer.on(IPC.historyChanged, listener)
+    return () => ipcRenderer.removeListener(IPC.historyChanged, listener)
+  },
+  showSuggestionsFlyout: (payload: SuggestionsFlyoutShow): void =>
+    ipcRenderer.send(IPC.suggestionsFlyoutShow, payload),
+  hideSuggestionsFlyout: (): void => ipcRenderer.send(IPC.suggestionsFlyoutHide),
+  onSuggestionPicked: (cb: (event: SuggestionPickedEvent) => void) => {
+    const listener = (_e: unknown, event: SuggestionPickedEvent): void => cb(event)
+    ipcRenderer.on(IPC.suggestionPicked, listener)
+    return () => ipcRenderer.removeListener(IPC.suggestionPicked, listener)
+  },
+  onSuggestionHovered: (cb: (event: SuggestionHoverEvent) => void) => {
+    const listener = (_e: unknown, event: SuggestionHoverEvent): void => cb(event)
+    ipcRenderer.on(IPC.suggestionHovered, listener)
+    return () => ipcRenderer.removeListener(IPC.suggestionHovered, listener)
+  },
+  // Used by the flyout window itself:
+  onSuggestionsFlyoutState: (cb: (state: SuggestionsFlyoutState) => void) => {
+    const listener = (_e: unknown, state: SuggestionsFlyoutState): void => cb(state)
+    ipcRenderer.on(IPC.suggestionsFlyoutState, listener)
+    return () => ipcRenderer.removeListener(IPC.suggestionsFlyoutState, listener)
+  },
+  pickSuggestion: (owner: string, url: string, newTab: boolean): void =>
+    ipcRenderer.send(IPC.suggestionsFlyoutPick, owner, url, newTab),
+  hoverSuggestion: (owner: string, index: number): void =>
+    ipcRenderer.send(IPC.suggestionsFlyoutHover, owner, index),
 
   listDownloads: (): Promise<DownloadItem[]> => ipcRenderer.invoke(IPC.downloadsList),
   openDownload: (id: string): void => ipcRenderer.send(IPC.downloadsOpen, id),
@@ -133,21 +179,27 @@ const api = {
     }
   },
 
-  listPasswords: (): Promise<SavedPassword[]> => ipcRenderer.invoke(IPC.passwordsList),
-  revealPassword: (id: string): Promise<string | null> => ipcRenderer.invoke(IPC.passwordsReveal, id),
-  removePassword: (id: string): Promise<void> => ipcRenderer.invoke(IPC.passwordsRemove, id),
-  onPasswordsUpdated: (cb: (passwords: SavedPassword[]) => void) => {
-    const listener = (_e: unknown, passwords: SavedPassword[]): void => cb(passwords)
-    ipcRenderer.on(IPC.passwordsUpdated, listener)
-    return () => ipcRenderer.removeListener(IPC.passwordsUpdated, listener)
+  getUpdateStatus: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.updateGet),
+  checkForUpdates: (): Promise<UpdateStatus> => ipcRenderer.invoke(IPC.updateCheck),
+  installUpdate: (): void => ipcRenderer.send(IPC.updateInstall),
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => {
+    const listener = (_e: unknown, status: UpdateStatus): void => cb(status)
+    ipcRenderer.on(IPC.updateStatus, listener)
+    return () => ipcRenderer.removeListener(IPC.updateStatus, listener)
   },
+
   relaunchApp: (): void => ipcRenderer.send(IPC.appRelaunch),
+  getDefaultBrowserStatus: (): Promise<DefaultBrowserStatus> => ipcRenderer.invoke(IPC.defaultBrowserGet),
+  makeDefaultBrowser: (): Promise<void> => ipcRenderer.invoke(IPC.defaultBrowserSet),
+  getCacheSize: (): Promise<number> => ipcRenderer.invoke(IPC.cacheGetSize),
+  clearCache: (): Promise<void> => ipcRenderer.invoke(IPC.cacheClear),
 
   onTabsUpdated: (cb: (tabs: TabSnapshot[]) => void) => {
     const listener = (_e: unknown, tabs: TabSnapshot[]): void => cb(tabs)
     ipcRenderer.on(IPC.tabsUpdated, listener)
     return () => ipcRenderer.removeListener(IPC.tabsUpdated, listener)
   },
+  getMemory: (): Promise<MemorySnapshot | null> => ipcRenderer.invoke(IPC.memoryGet),
   onMemoryUpdated: (cb: (snapshot: MemorySnapshot) => void) => {
     const listener = (_e: unknown, snapshot: MemorySnapshot): void => cb(snapshot)
     ipcRenderer.on(IPC.memoryUpdated, listener)
@@ -168,7 +220,14 @@ const api = {
     const listener = (_e: unknown, payload: AlertDialogPayload): void => cb(payload)
     ipcRenderer.on(IPC.alertDialogShow, listener)
     return () => ipcRenderer.removeListener(IPC.alertDialogShow, listener)
-  }
+  },
+  onCertWarning: (cb: (payload: CertWarningPayload) => void) => {
+    const listener = (_e: unknown, payload: CertWarningPayload): void => cb(payload)
+    ipcRenderer.on(IPC.certWarningShow, listener)
+    return () => ipcRenderer.removeListener(IPC.certWarningShow, listener)
+  },
+  respondCertWarning: (id: string, proceed: boolean): void =>
+    ipcRenderer.send(IPC.certWarningRespond, id, proceed)
 }
 
 contextBridge.exposeInMainWorld('lumo', api)

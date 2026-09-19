@@ -7,19 +7,24 @@ import type {
   Bookmark,
   DownloadItem,
   AlertDialogPayload,
-  AnchorBounds
+  CertWarningPayload,
+  AnchorBounds,
+  UpdateStatus
 } from '@shared/ipc'
 import TabStrip from './components/TabStrip'
+import TabSidebar from './components/TabSidebar'
 import AddressBar from './components/AddressBar'
-import TabManagerPanel from './components/TabManagerPanel'
+import ToolButtons from './components/ToolButtons'
 import WindowControls from './components/WindowControls'
 import BookmarksBar from './components/BookmarksBar'
 import SettingsPage from './components/SettingsPage'
 import NewTabPage from './components/NewTabPage'
+import HistoryPage from './components/HistoryPage'
 import AlertModal from './components/AlertModal'
+import CertWarningModal from './components/CertWarningModal'
 import ErrorBoundary from './components/ErrorBoundary'
 import { lighten } from './lib/color'
-import { animateValue } from './lib/animate'
+import { isInteractiveTarget } from './lib/interactive'
 
 const DEFAULT_SETTINGS: Settings = {
   memorySaverEnabled: true,
@@ -28,15 +33,16 @@ const DEFAULT_SETTINGS: Settings = {
   showBookmarksBar: true,
   theme: { accent: '#2e6bff', danger: '#ff4d6a', bg: '#14151d' },
   hardwareAccelerationEnabled: true,
-  autofillPasswordsEnabled: true,
-  autoSavePasswordsEnabled: true
+  tabLayout: 'top',
+  sidebarCollapsed: false,
+  restoreSession: true,
+  autoUpdate: true
 }
 
 export default function App(): JSX.Element {
   const [tabs, setTabs] = useState<TabSnapshot[]>([])
   const [memory, setMemory] = useState<MemorySnapshot | null>(null)
   const [aiStatus, setAiStatus] = useState<AiStatusPayload>({ busy: false, message: null })
-  const [managerOpen, setManagerOpen] = useState(false)
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [aiAnswer, setAiAnswer] = useState<string | null>(null)
@@ -45,9 +51,12 @@ export default function App(): JSX.Element {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [toolbarHidden, setToolbarHidden] = useState(false)
+  const [update, setUpdate] = useState<UpdateStatus | null>(null)
+  const [updateDismissed, setUpdateDismissed] = useState(false)
   const [alertQueue, setAlertQueue] = useState<AlertDialogPayload[]>([])
-  const toolbarRef = useRef<HTMLDivElement>(null)
-  const panelWidthRef = useRef(0)
+  const [certQueue, setCertQueue] = useState<CertWarningPayload[]>([])
+  const slotRef = useRef<HTMLDivElement>(null)
+  const lastBoundsRef = useRef('')
 
   useEffect(() => {
     const offTabs = window.lumo.onTabsUpdated(setTabs)
@@ -58,9 +67,13 @@ export default function App(): JSX.Element {
     const offDownloads = window.lumo.onDownloadsUpdated(setDownloads)
     const offFullscreen = window.lumo.onFullscreenChanged(setToolbarHidden)
     const offAlert = window.lumo.onAlertDialog((payload) => setAlertQueue((q) => [...q, payload]))
+    const offSettings = window.lumo.onSettingsChanged(setSettingsState)
+    const offCert =window.lumo.onCertWarning((payload) => setCertQueue((q) => [...q, payload]))
+    const offUpdate = window.lumo.onUpdateStatus(setUpdate)
     const offFlyout = window.lumo.onDownloadsFlyoutChanged(setDownloadsOpen)
     const offSettingsFlyout = window.lumo.onSettingsFlyoutChanged(setSettingsOpen)
     void window.lumo.getSettings().then(setSettingsState)
+    void window.lumo.getUpdateStatus().then(setUpdate)
     void window.lumo.listBookmarks().then(setBookmarks)
     void window.lumo.listDownloads().then(setDownloads)
     return () => {
@@ -72,6 +85,9 @@ export default function App(): JSX.Element {
       offDownloads()
       offFullscreen()
       offAlert()
+      offCert()
+      offSettings()
+      offUpdate()
       offFlyout()
       offSettingsFlyout()
     }
@@ -86,40 +102,46 @@ export default function App(): JSX.Element {
     root.style.setProperty('--border', lighten(settings.theme.bg, 0.14))
   }, [settings.theme])
 
-  // Reports the toolbar's real height to the main process so the page view is positioned right below it.
+  // The page views are native and sit on top of the UI, so the main process needs the exact area
+  // the layout leaves for them. Measuring the slot itself keeps this right for every tab layout.
+  // The layout/collapse/fullscreen deps re-report moves that don't change the slot's size (e.g. left <-> right).
   useEffect(() => {
-    if (toolbarHidden) {
-      window.lumo.setToolbarHeight(0)
-      return
-    }
-    const el = toolbarRef.current
+    const el = slotRef.current
     if (!el) return
-    const report = (): void => window.lumo.setToolbarHeight(el.offsetHeight)
+    const report = (): void => {
+      const r = el.getBoundingClientRect()
+      const bounds = {
+        x: Math.round(r.x),
+        y: Math.round(r.y),
+        width: Math.round(r.width),
+        height: Math.round(r.height)
+      }
+      const key = `${bounds.x},${bounds.y},${bounds.width},${bounds.height}`
+      if (key === lastBoundsRef.current) return
+      lastBoundsRef.current = key
+      window.lumo.setContentBounds(bounds)
+    }
     report()
     const observer = new ResizeObserver(report)
     observer.observe(el)
-    return () => observer.disconnect()
-  }, [managerOpen, aiStatus.busy, aiAnswer, settings.showBookmarksBar, toolbarHidden])
-
-  // Tabs & RAM reserves real width from the page so the user can inspect and organize tabs.
-  // Downloads now floats over the page as a popover without resizing the web contents.
-  useEffect(() => {
-    const target = managerOpen ? 380 : 0
-    return animateValue(panelWidthRef.current, target, 220, (value) => {
-      panelWidthRef.current = value
-      window.lumo.setPanelWidth(Math.round(value))
-    })
-  }, [managerOpen])
+    window.addEventListener('resize', report)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', report)
+    }
+  }, [settings.tabLayout, settings.sidebarCollapsed, toolbarHidden])
 
   // A page's alert() is a real blocking dialog — hide the native view while it's up so our own
   // styled modal (which native views would otherwise always paint over) is visible and usable.
   useEffect(() => {
-    window.lumo.setModalActive(alertQueue.length > 0)
-  }, [alertQueue.length])
+    window.lumo.setModalActive(alertQueue.length + certQueue.length > 0)
+  }, [alertQueue.length, certQueue.length])
 
-  const toggleManager = useCallback(() => {
-    setManagerOpen((v) => !v)
+  const answerCertWarning = useCallback((id: string, proceed: boolean) => {
+    window.lumo.respondCertWarning(id, proceed)
+    setCertQueue((q) => q.filter((w) => w.id !== id))
   }, [])
+
   const handleToggleDownloads = useCallback((bounds?: AnchorBounds) => {
     window.lumo.toggleDownloadsFlyout(bounds)
   }, [])
@@ -189,43 +211,90 @@ export default function App(): JSX.Element {
       })
   }, [activeTab, bookmarks])
 
+  const layout = settings.tabLayout
+  // With a sidebar the top bar stays a single lean row (navigation + address + window controls) and
+  // the tool buttons move to the sidebar footer.
+  const sidebarLayout = layout === 'left' || layout === 'right'
+  const tools = (
+    <ToolButtons
+      onInspect={inspect}
+      downloads={downloads}
+      downloadsOpen={downloadsOpen}
+      onToggleDownloads={handleToggleDownloads}
+      settingsOpen={settingsOpen}
+      onToggleSettings={handleToggleSettings}
+    />
+  )
+  const addressBar = (
+    <AddressBar
+      activeTab={activeTab}
+      onNavigate={navigate}
+      onBack={goBack}
+      onForward={goForward}
+      onReload={reload}
+      isBookmarked={isBookmarked}
+      onToggleBookmark={toggleBookmark}
+      aiStatus={aiStatus}
+      tools={sidebarLayout ? undefined : tools}
+      inline={sidebarLayout}
+    />
+  )
+  const showSidebar = !toolbarHidden && (layout === 'left' || layout === 'right')
+  const sidebar = showSidebar ? (
+    <ErrorBoundary>
+      <TabSidebar
+        side={layout === 'right' ? 'right' : 'left'}
+        tabs={tabs}
+        collapsed={settings.sidebarCollapsed}
+        onToggleCollapsed={() => updateSettings({ sidebarCollapsed: !settings.sidebarCollapsed })}
+        onActivate={activateTab}
+        onClose={closeTab}
+        onNewTab={newTab}
+        tools={tools}
+      />
+    </ErrorBoundary>
+  ) : null
+
   return (
-    <div className="app">
-      <div className={`toolbar ${toolbarHidden ? 'toolbar--collapsed' : ''}`} ref={toolbarRef}>
+    <div className={`app app--${layout}`}>
+      <div className={`toolbar ${toolbarHidden ? 'toolbar--collapsed' : ''}`}>
         <ErrorBoundary>
-        <div className="toolbar-row" onDoubleClick={() => window.lumo.toggleMaximizeWindow()}>
-          <TabStrip
-            tabs={tabs}
-            onActivate={activateTab}
-            onClose={closeTab}
-            onNewTab={newTab}
-            onToggleManager={toggleManager}
-            managerOpen={managerOpen}
-          />
+        <div
+          className="toolbar-row"
+          onDoubleClick={(e) => {
+            // Only empty space maximizes: double-clicking a tab or a button must not resize the window.
+            if (!isInteractiveTarget(e.target)) window.lumo.toggleMaximizeWindow()
+          }}
+        >
+          {layout === 'top' ? (
+            <TabStrip tabs={tabs} onActivate={activateTab} onClose={closeTab} onNewTab={newTab} />
+          ) : sidebarLayout ? (
+            addressBar
+          ) : (
+            <div className="toolbar-row__brand">Lumo</div>
+          )}
           <WindowControls isMaximized={isMaximized} />
         </div>
-        <AddressBar
-          activeTab={activeTab}
-          onNavigate={navigate}
-          onBack={goBack}
-          onForward={goForward}
-          onReload={reload}
-          onInspect={inspect}
-          isBookmarked={isBookmarked}
-          onToggleBookmark={toggleBookmark}
-          aiStatus={aiStatus}
-          downloads={downloads}
-          downloadsOpen={downloadsOpen}
-          onToggleDownloads={handleToggleDownloads}
-          settingsOpen={settingsOpen}
-          onToggleSettings={handleToggleSettings}
-        />
+        {!sidebarLayout && addressBar}
         {settings.showBookmarksBar && (
           <BookmarksBar
             bookmarks={bookmarks}
             onOpen={(url) => navigate(url)}
             onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
           />
+        )}
+        {update?.state === 'ready' && !updateDismissed && (
+          <div className="ai-answer update-banner">
+            <span>O Lumo {update.version} foi baixado e está pronto para instalar.</span>
+            <div className="update-banner__actions">
+              <button className="update-banner__install" onClick={() => window.lumo.installUpdate()}>
+                Reiniciar e atualizar
+              </button>
+              <button onClick={() => setUpdateDismissed(true)} title="Depois">
+                ×
+              </button>
+            </div>
+          </div>
         )}
         {aiAnswer && (
           <div className="ai-answer">
@@ -240,27 +309,22 @@ export default function App(): JSX.Element {
       </div>
 
       <div className="body">
-        <ErrorBoundary>
-        <TabManagerPanel
-          open={managerOpen}
-          tabs={tabs}
-          memory={memory}
-          aiStatus={aiStatus}
-          onActivate={activateTab}
-          onClose={closeTab}
-          onSuspend={(id) => window.lumo.suspendTab(id)}
-          onResume={(id) => window.lumo.resumeTab(id)}
-          onOrganize={() => window.lumo.organizeTabs()}
-          onDismiss={() => setManagerOpen(false)}
-          onSaveSettings={updateSettings}
-        />
-
-        {activeTab && isInternal(activeTab.url) ? (
-          <div className="webview-slot webview-slot--internal">
-            {activeTab.url === 'lumo://settings' && (
-              <SettingsPage settings={settings} onChange={updateSettings} />
+        {showSidebar && layout === 'left' && sidebar}
+        <div
+          ref={slotRef}
+          className={`webview-slot ${activeTab && isInternal(activeTab.url) ? 'webview-slot--internal' : ''}`}
+        >
+          <ErrorBoundary>
+            {activeTab?.url === 'lumo://settings' && (
+              <SettingsPage settings={settings} onChange={updateSettings} memory={memory} tabs={tabs} />
             )}
-            {activeTab.url === 'lumo://newtab' && (
+            {activeTab?.url === 'lumo://history' && (
+              <HistoryPage
+                onOpen={navigate}
+                onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
+              />
+            )}
+            {activeTab?.url === 'lumo://newtab' && (
               <NewTabPage
                 bookmarks={bookmarks}
                 totalMemoryMB={memory?.totalMB ?? null}
@@ -268,15 +332,27 @@ export default function App(): JSX.Element {
                 onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
               />
             )}
-          </div>
-        ) : (
-          <div className="webview-slot" />
-        )}
-        </ErrorBoundary>
+          </ErrorBoundary>
+        </div>
+        {showSidebar && layout === 'right' && sidebar}
       </div>
 
-      {alertQueue[0] && (
-        <AlertModal alert={alertQueue[0]} onDismiss={() => setAlertQueue((q) => q.slice(1))} />
+      {!toolbarHidden && layout === 'bottom' && (
+        <div className="tabbar-bottom">
+          <TabStrip tabs={tabs} onActivate={activateTab} onClose={closeTab} onNewTab={newTab} />
+        </div>
+      )}
+
+      {certQueue[0] ? (
+        <CertWarningModal
+          warning={certQueue[0]}
+          onBack={() => answerCertWarning(certQueue[0].id, false)}
+          onProceed={() => answerCertWarning(certQueue[0].id, true)}
+        />
+      ) : (
+        alertQueue[0] && (
+          <AlertModal alert={alertQueue[0]} onDismiss={() => setAlertQueue((q) => q.slice(1))} />
+        )
       )}
     </div>
   )

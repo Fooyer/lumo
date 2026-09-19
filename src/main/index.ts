@@ -1,22 +1,69 @@
-import { app, BrowserWindow, ipcMain, shell, clipboard, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell, clipboard, Menu } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { IPC, type Settings, type AnchorBounds } from '../shared/ipc'
+import { IPC, type Settings, type AnchorBounds, type SuggestionsFlyoutShow } from '../shared/ipc'
 import { TabManager, buildEditContextItems, searchUrl } from './tabManager'
 import { MemoryManager } from './memoryManager'
 import { SettingsStore } from './settingsStore'
+import { SessionStore } from './sessionStore'
+import { installWidevineFromBrowser, whenWidevineReady } from './widevine'
+import { externalUrlsFromArgv, getDefaultBrowserStatus, makeDefaultBrowser } from './defaultBrowser'
 import { BookmarksManager } from './bookmarksManager'
+import { HistoryManager } from './historyManager'
 import { DownloadsManager } from './downloadsManager'
-import { PasswordsManager } from './passwordsManager'
 import { DownloadsFlyout } from './downloadsFlyout'
 import { SettingsFlyout } from './settingsFlyout'
+import { SuggestionsFlyout } from './suggestionsFlyout'
+import { Updater } from './updater'
 
 const settingsStore = new SettingsStore(join(app.getPath('userData'), 'lumo-settings.json'))
 const bookmarksManager = new BookmarksManager(join(app.getPath('userData'), 'lumo-bookmarks.json'))
-const passwordsManager = new PasswordsManager(join(app.getPath('userData'), 'lumo-passwords.json'))
+const historyManager = new HistoryManager(join(app.getPath('userData'), 'lumo-history.json'))
+const updater = new Updater(() => settingsStore.get().autoUpdate)
+const sessionStore = new SessionStore(join(app.getPath('userData'), 'lumo-session.json'))
+const SESSION_SAVE_DEBOUNCE_MS = 800
 // Constructed once the app is ready (below) — it reads session.defaultSession, which isn't available before then.
 let downloadsManager: DownloadsManager
+
+// As the default browser, other programs launch Lumo with a URL: a second launch must hand that URL to
+// the running window instead of opening another one.
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) app.exit(0)
+
+let mainWindowRef: BrowserWindow | null = null
+// Set once the first window has restored its tabs; URLs that arrive earlier are queued.
+let openExternalUrl: ((url: string) => void) | null = null
+const pendingExternalUrls: string[] = externalUrlsFromArgv(process.argv)
+
+function handleExternalUrl(url: string): void {
+  if (openExternalUrl) openExternalUrl(url)
+  else pendingExternalUrls.push(url)
+}
+
+app.on('second-instance', (_event, argv) => {
+  for (const url of externalUrlsFromArgv(argv)) handleExternalUrl(url)
+  const win = mainWindowRef
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  }
+})
+
+// Electron's default user agent advertises "Electron/x" and the app name, which streaming sites and
+// their CDNs (Crunchyroll's, for one) treat as a non-browser client and answer with 403. Present as
+// the plain Chrome this build is based on instead.
+const chromeMajor = process.versions.chrome.split('.')[0]
+const uaPlatform =
+  process.platform === 'win32'
+    ? 'Windows NT 10.0; Win64; x64'
+    : process.platform === 'darwin'
+      ? 'Macintosh; Intel Mac OS X 10_15_7'
+      : 'X11; Linux x86_64'
+app.userAgentFallback = `Mozilla/5.0 (${uaPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`
+
+installWidevineFromBrowser()
 
 // Must run before the app is ready / any window is created — can't be toggled at runtime afterwards.
 if (!settingsStore.get().hardwareAccelerationEnabled) {
@@ -38,22 +85,58 @@ function createWindow(): void {
   })
 
   const tabManager = new TabManager(mainWindow)
-  const memoryManager = new MemoryManager(tabManager, () => settingsStore.get())
+  tabManager.setHistory(historyManager)
+  const memoryManager = new MemoryManager(
+    tabManager,
+    () => settingsStore.get(),
+    (wc) => downloadsManager.isDownloadingFrom(wc)
+  )
   const downloadsFlyout = new DownloadsFlyout(mainWindow)
   const settingsFlyout = new SettingsFlyout(mainWindow)
+  const suggestionsFlyout = new SuggestionsFlyout(mainWindow)
 
   const sendTabs = (): void => {
     mainWindow.webContents.send(IPC.tabsUpdated, tabManager.snapshot())
   }
-  tabManager.setOnChange(sendTabs)
+
+  // The open tabs are saved continuously (debounced), not only on exit, so a crash or a killed
+  // process still leaves a recent session to restore.
+  let sessionSaveTimer: NodeJS.Timeout | null = null
+  let sessionClosed = false
+  const saveSession = (): void => {
+    if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
+    sessionSaveTimer = null
+    if (sessionClosed || !settingsStore.get().restoreSession) return
+    const state = tabManager.getSessionState()
+    if (state) sessionStore.save(state)
+  }
+  tabManager.setOnChange(() => {
+    sendTabs()
+    if (sessionSaveTimer) clearTimeout(sessionSaveTimer)
+    sessionSaveTimer = setTimeout(saveSession, SESSION_SAVE_DEBOUNCE_MS)
+  })
+  // Tear-down after this point closes the tabs one by one; that must not overwrite the saved session.
+  mainWindow.on('close', () => {
+    saveSession()
+    sessionClosed = true
+  })
   tabManager.setOnAiBusy((busy, message) => {
     mainWindow.webContents.send(IPC.aiStatus, { busy, message })
   })
   memoryManager.setOnUpdate((snapshot) => {
     mainWindow.webContents.send(IPC.memoryUpdated, snapshot)
   })
+  tabManager.setOnCertWarning((payload) => {
+    mainWindow.webContents.send(IPC.certWarningShow, payload)
+  })
+  ipcMain.on(IPC.certWarningRespond, (_e, id: string, proceed: boolean) =>
+    tabManager.resolveCertWarning(id, proceed === true)
+  )
   tabManager.setOnFullscreenChange((hidden) => {
     mainWindow.webContents.send(IPC.fullscreenChanged, hidden)
+  })
+  historyManager.setOnChange(() => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.historyChanged)
   })
   downloadsManager.setOnUpdate(() => {
     mainWindow.webContents.send(IPC.downloadsUpdated, downloadsManager.list())
@@ -84,10 +167,20 @@ function createWindow(): void {
   ipcMain.handle(IPC.settingsSet, (_e, partial: Partial<Settings>) => {
     const next = settingsStore.set(partial)
     mainWindow.setBackgroundColor(next.theme.bg)
+    // The main window and the quick-settings flyout are separate renderers; keep both in sync.
+    mainWindow.webContents.send(IPC.settingsChanged, next)
+    settingsFlyout.send(IPC.settingsChanged, next)
     return next
   })
-  ipcMain.on(IPC.uiToolbarHeight, (_e, px: number) => tabManager.setToolbarHeight(px))
-  ipcMain.on(IPC.uiPanelWidth, (_e, px: number) => tabManager.setPanelWidth(px))
+  ipcMain.on(IPC.uiContentBounds, (_e, r: AnchorBounds) => {
+    if (![r?.x, r?.y, r?.width, r?.height].every((n) => Number.isFinite(n))) return
+    tabManager.setContentBounds({
+      x: Math.round(r.x),
+      y: Math.round(r.y),
+      width: Math.round(r.width),
+      height: Math.round(r.height)
+    })
+  })
   ipcMain.handle(IPC.tabsToggleDevtools, (_e, id: string) => tabManager.toggleDevTools(id))
 
   ipcMain.handle(IPC.bookmarksList, () => bookmarksManager.list())
@@ -144,6 +237,42 @@ function createWindow(): void {
     ]).popup({ window: mainWindow })
   })
 
+  ipcMain.handle(IPC.historyList, (_e, query: unknown, limit: unknown) =>
+    historyManager.list(
+      typeof query === 'string' ? query : '',
+      Math.min(Math.max(Number(limit) || 200, 1), 2000)
+    )
+  )
+  ipcMain.handle(IPC.historyRemove, (_e, id: string) => historyManager.removeVisit(id))
+  ipcMain.handle(IPC.historyClear, () => historyManager.clear())
+  ipcMain.handle(IPC.historySuggest, (_e, query: unknown) =>
+    typeof query === 'string' ? historyManager.suggest(query, bookmarksManager.list(), 6) : []
+  )
+  ipcMain.on(IPC.suggestionsFlyoutShow, (_e, payload: SuggestionsFlyoutShow) =>
+    suggestionsFlyout.show(payload)
+  )
+  ipcMain.on(IPC.suggestionsFlyoutHide, () => suggestionsFlyout.hide())
+  // The flyout is a separate window; its clicks and hovers are relayed back to the UI that owns the input.
+  ipcMain.on(IPC.suggestionsFlyoutPick, (_e, owner: string, url: string, newTab: boolean) => {
+    // Middle-click opens the page in the background and leaves the list up, so several can be opened in a row.
+    if (newTab === true) {
+      tabManager.create(url, { activate: false })
+      return
+    }
+    suggestionsFlyout.hide()
+    mainWindow.webContents.send(IPC.suggestionPicked, { owner, url })
+  })
+  ipcMain.on(IPC.suggestionsFlyoutHover, (_e, owner: string, index: number) =>
+    mainWindow.webContents.send(IPC.suggestionHovered, { owner, index })
+  )
+
+  updater.setOnStatus((status) => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.updateStatus, status)
+  })
+  ipcMain.handle(IPC.updateGet, () => updater.getStatus())
+  ipcMain.handle(IPC.updateCheck, () => updater.check())
+  ipcMain.on(IPC.updateInstall, () => updater.installNow())
+
   ipcMain.handle(IPC.downloadsList, () => downloadsManager.list())
   ipcMain.on(IPC.downloadsOpen, (_e, id: string) => downloadsManager.open(id))
   ipcMain.on(IPC.downloadsShowInFolder, (_e, id: string) => downloadsManager.showInFolder(id))
@@ -162,27 +291,20 @@ function createWindow(): void {
     settingsFlyout.closeImmediate()
   })
 
-  ipcMain.handle(IPC.passwordsList, () => passwordsManager.list())
-  ipcMain.handle(IPC.passwordsReveal, (_e, id: string) => passwordsManager.reveal(id))
-  ipcMain.handle(IPC.passwordsRemove, (_e, id: string) => {
-    passwordsManager.remove(id)
-    mainWindow.webContents.send(IPC.passwordsUpdated, passwordsManager.list())
+  ipcMain.handle(IPC.memoryGet, () => memoryManager.getSnapshot())
+  ipcMain.handle(IPC.defaultBrowserGet, () => getDefaultBrowserStatus())
+  ipcMain.handle(IPC.defaultBrowserSet, () => makeDefaultBrowser())
+  ipcMain.handle(IPC.cacheGetSize, () => session.defaultSession.getCacheSize())
+  ipcMain.handle(IPC.cacheClear, async () => {
+    await session.defaultSession.clearCache()
+    await session.defaultSession.clearCodeCaches({})
   })
   ipcMain.on(IPC.appRelaunch, () => {
+    saveSession()
     app.relaunch()
     app.exit(0)
   })
 
-  // Usadas apenas pelo preload injetado em cada aba (src/preload/tab.ts), não pela UI do app.
-  ipcMain.handle('passwords:get-for-domain', (_e, domain: string) => {
-    if (!settingsStore.get().autofillPasswordsEnabled) return null
-    return passwordsManager.findForDomain(domain)
-  })
-  ipcMain.on('passwords:capture', (_e, payload: { domain: string; username: string; password: string }) => {
-    if (!settingsStore.get().autoSavePasswordsEnabled || !payload.password) return
-    passwordsManager.upsert(payload.domain, payload.username, payload.password)
-    mainWindow.webContents.send(IPC.passwordsUpdated, passwordsManager.list())
-  })
   ipcMain.on(IPC.setModalActive, (_e, active: boolean) => tabManager.setModalActive(active))
   ipcMain.on('dialog:alert', (_e, payload: { message: string; domain: string }) => {
     mainWindow.webContents.send(IPC.alertDialogShow, {
@@ -201,8 +323,8 @@ function createWindow(): void {
   mainWindow.on('maximize', () => mainWindow.webContents.send(IPC.windowMaximizedChanged, true))
   mainWindow.on('unmaximize', () => mainWindow.webContents.send(IPC.windowMaximizedChanged, false))
 
-  mainWindow.webContents.on('before-input-event', (_e, input) => {
-    if (input.type === 'keyDown') tabManager.handleShortcut(input)
+  mainWindow.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && tabManager.handleShortcut(input)) e.preventDefault()
   })
   mainWindow.webContents.on('context-menu', (_e, params) => {
     const items = buildEditContextItems(params, (query) => tabManager.create(searchUrl(query)))
@@ -223,14 +345,28 @@ function createWindow(): void {
   }
 
   mainWindow.webContents.once('did-finish-load', () => {
-    tabManager.create()
+    const saved = settingsStore.get().restoreSession ? sessionStore.load() : null
+    if (saved) tabManager.restoreSession(saved)
+    else tabManager.create()
     memoryManager.start()
+    updater.start()
+
+    openExternalUrl = (url) => tabManager.create(url)
+    for (const url of pendingExternalUrls.splice(0)) openExternalUrl(url)
   })
 
-  mainWindow.on('closed', () => memoryManager.stop())
+  mainWindowRef = mainWindow
+  mainWindow.on('closed', () => {
+    memoryManager.stop()
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null
+      openExternalUrl = null
+    }
+  })
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return
   electronApp.setAppUserModelId('com.lumo.browser')
 
   downloadsManager = new DownloadsManager(join(app.getPath('userData'), 'lumo-downloads.json'))
@@ -239,12 +375,16 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  await whenWidevineReady()
   createWindow()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
 })
+
+// Pending history writes are debounced; make sure the last visits reach the disk on the way out.
+app.on('before-quit', () => historyManager.flush())
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -1,0 +1,41 @@
+appId: com.lumo.browser
+productName: Lumo
+copyright: Lumo
+
+directories:
+  output: dist
+  buildResources: resources
+
+files:
+  - out/**
+  - resources/icon.png
+  - package.json
+
+asar: true
+
+# Lumo runs on the castLabs Electron fork (Widevine DRM). Package that build instead of downloading
+# stock Electron; its version string ("+wvcus") isn't plain semver, so it's given explicitly.
+electronDist: node_modules/electron/dist
+electronVersion: 33.4.11
+
+# The castLabs build must be VMP-signed (EVS) after packaging, or DRM sites reject it.
+afterSign: scripts/vmp-sign.js
+
+win:
+  icon: resources/icon.png
+  target:
+    - target: nsis
+      arch: x64
+
+nsis:
+  oneClick: true
+  perMachine: false
+  deleteAppDataOnUninstall: false
+  artifactName: Lumo-Setup-${version}.${ext}
+
+# Updates come from the GitHub releases of this repository (electron-updater reads latest.yml from them).
+publish:
+  provider: github
+  owner: Fooyer
+  repo: lumo
+  releaseType: release

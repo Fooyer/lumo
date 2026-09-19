@@ -1,7 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
-import { ArrowLeft, ArrowRight, RotateCw, Star, Code2, Settings as SettingsIcon } from 'lucide-react'
-import type { TabSnapshot, AiStatusPayload, DownloadItem, AnchorBounds } from '@shared/ipc'
-import DownloadsButton from './DownloadsButton'
+import type { ReactNode } from 'react'
+import { ArrowLeft, ArrowRight, RotateCw, Star } from 'lucide-react'
+import type { TabSnapshot, AiStatusPayload } from '@shared/ipc'
+import { useSuggestions } from '../lib/useSuggestions'
 
 interface Props {
   activeTab: TabSnapshot | null
@@ -9,15 +10,13 @@ interface Props {
   onBack: () => void
   onForward: () => void
   onReload: () => void
-  onInspect: () => void
   isBookmarked: boolean
   onToggleBookmark: () => void
   aiStatus: AiStatusPayload
-  downloads: DownloadItem[]
-  downloadsOpen: boolean
-  onToggleDownloads: (bounds?: AnchorBounds) => void
-  settingsOpen: boolean
-  onToggleSettings: (bounds?: AnchorBounds) => void
+  /** Dev/downloads/settings buttons shown at the end of the bar; omitted when they live elsewhere (sidebar layouts). */
+  tools?: ReactNode
+  /** Sits inside the top toolbar row, next to the window controls, instead of on its own row. */
+  inline?: boolean
 }
 
 export default function AddressBar({
@@ -26,20 +25,36 @@ export default function AddressBar({
   onBack,
   onForward,
   onReload,
-  onInspect,
   isBookmarked,
   onToggleBookmark,
   aiStatus,
-  downloads,
-  downloadsOpen,
-  onToggleDownloads,
-  settingsOpen,
-  onToggleSettings
+  tools,
+  inline = false
 }: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [editing, setEditing] = useState(false)
   const [spinning, setSpinning] = useState(false)
-  const gearBtnRef = useRef<HTMLButtonElement>(null)
+  // Suggestions are for what the user types, not for the current URL that fills the box on focus.
+  const [dirty, setDirty] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+  // A click that gives the field focus selects its whole text (to type a new address from scratch); a
+  // click into a field that already has focus places the caret as usual.
+  const focusedByPointerRef = useRef(false)
+  const go = (input: string): void => {
+    onNavigate(input)
+    setEditing(false)
+    setDirty(false)
+  }
+  const suggestions = useSuggestions({
+    value,
+    setValue,
+    inputRef,
+    enabled: editing && dirty,
+    anchorRef: formRef,
+    owner: 'address-bar',
+    onPick: go
+  })
 
   useEffect(() => {
     if (!editing) setValue(activeTab?.url ?? '')
@@ -51,22 +66,8 @@ export default function AddressBar({
     setTimeout(() => setSpinning(false), 500)
   }
 
-  const handleSettingsClick = (): void => {
-    const rect = gearBtnRef.current?.getBoundingClientRect()
-    onToggleSettings(
-      rect
-        ? {
-            x: rect.x,
-            y: rect.y,
-            width: rect.width,
-            height: rect.height
-          }
-        : undefined
-    )
-  }
-
   return (
-    <div className="address-bar">
+    <div className={`address-bar ${inline ? 'address-bar--inline' : ''}`}>
       <button className="nav-btn nav-btn--back" onClick={onBack} disabled={!activeTab?.canGoBack} title="Voltar">
         <ArrowLeft size={16} strokeWidth={2.4} />
       </button>
@@ -89,21 +90,41 @@ export default function AddressBar({
       </button>
 
       <form
+        ref={formRef}
         className="address-form"
         onSubmit={(e) => {
           e.preventDefault()
-          if (!value.trim()) return
-          onNavigate(value.trim())
-          setEditing(false)
+          const target = suggestions.selected?.url ?? value.trim()
+          if (target) go(target)
         }}
       >
         <input
+          ref={inputRef}
           className="address-input"
           value={value}
           placeholder="Digite uma URL, uma busca ou pergunte algo…"
-          onFocus={() => setEditing(true)}
-          onBlur={() => setEditing(false)}
-          onChange={(e) => setValue(e.target.value)}
+          onMouseDown={(e) => {
+            focusedByPointerRef.current = document.activeElement !== e.currentTarget
+          }}
+          // Releasing the button would otherwise collapse the selection into a caret.
+          onMouseUp={(e) => {
+            if (focusedByPointerRef.current) e.preventDefault()
+            focusedByPointerRef.current = false
+          }}
+          onFocus={(e) => {
+            setEditing(true)
+            e.currentTarget.select()
+          }}
+          onBlur={() => {
+            setEditing(false)
+            setDirty(false)
+          }}
+          onChange={(e) => {
+            suggestions.onChange(e)
+            setEditing(true)
+            setDirty(true)
+          }}
+          onKeyDown={suggestions.onKeyDown}
         />
         {aiStatus.busy && <span className="ai-pill">{aiStatus.message ?? 'Pensando…'}</span>}
 
@@ -118,22 +139,7 @@ export default function AddressBar({
         </button>
       </form>
 
-      <div className="address-bar__tools">
-        <button className="nav-btn nav-btn--inspect" onClick={onInspect} title="Inspecionar página (F12)">
-          <Code2 size={16} strokeWidth={2.2} />
-        </button>
-        <DownloadsButton downloads={downloads} open={downloadsOpen} onToggle={onToggleDownloads} />
-        <button
-          ref={gearBtnRef}
-          className={`gear-btn ${settingsOpen ? 'gear-btn--active' : ''}`}
-          title="Configurações"
-          onClick={handleSettingsClick}
-        >
-          <span className="gear-btn__icon">
-            <SettingsIcon size={16} strokeWidth={2.2} />
-          </span>
-        </button>
-      </div>
+      {tools && <div className="address-bar__tools">{tools}</div>}
     </div>
   )
 }

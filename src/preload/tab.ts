@@ -1,52 +1,5 @@
 import { ipcRenderer } from 'electron'
 
-interface CredentialForDomain {
-  username: string
-  password: string
-}
-
-function usernameCandidates(scope: Document | HTMLFormElement): HTMLInputElement[] {
-  return Array.from(scope.querySelectorAll<HTMLInputElement>('input[type="text"], input[type="email"], input:not([type])'))
-}
-
-function setValue(el: HTMLInputElement, value: string): void {
-  el.value = value
-  el.dispatchEvent(new Event('input', { bubbles: true }))
-  el.dispatchEvent(new Event('change', { bubbles: true }))
-}
-
-window.addEventListener('DOMContentLoaded', () => {
-  ipcRenderer
-    .invoke('passwords:get-for-domain', location.hostname)
-    .then((cred: CredentialForDomain | null) => {
-      if (!cred) return
-      const passInput = document.querySelector<HTMLInputElement>('input[type="password"]')
-      if (!passInput) return
-      const scope = passInput.form ?? document
-      const userInput = usernameCandidates(scope)[0]
-      if (userInput) setValue(userInput, cred.username)
-      setValue(passInput, cred.password)
-    })
-    .catch(() => {})
-})
-
-document.addEventListener(
-  'submit',
-  (event) => {
-    const form = event.target
-    if (!(form instanceof HTMLFormElement)) return
-    const passInput = form.querySelector<HTMLInputElement>('input[type="password"]')
-    if (!passInput || !passInput.value) return
-    const userInput = usernameCandidates(form)[0]
-    ipcRenderer.send('passwords:capture', {
-      domain: location.hostname,
-      username: userInput?.value ?? '',
-      password: passInput.value
-    })
-  },
-  true
-)
-
 // Swaps the page's window.alert() for Lumo's own styled dialog. Since contextIsolation keeps this
 // preload's `window` separate from the page's, the override is injected as an inline <script> that
 // runs directly in the page's own world, and it talks back to us here via postMessage.

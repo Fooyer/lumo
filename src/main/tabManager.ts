@@ -9,13 +9,19 @@ import {
 } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
-import type { TabSnapshot } from '../shared/ipc'
+import type { TabSnapshot, CertWarningPayload } from '../shared/ipc'
 import { resolveNavigationIntent, suggestTabGroups } from './opencode'
+import type { HistoryManager } from './historyManager'
+import type { SavedSession } from './sessionStore'
 
 const DEFAULT_NEW_TAB_URL = 'lumo://newtab'
+const HISTORY_URL = 'lumo://history'
+const FREEZE_JPEG_QUALITY = 80
 const CLOSED_STACK_LIMIT = 20
 const SPLIT_GAP = 3
 const MAX_SPLIT_SIZE = 3
+// A background tab burning at least this much CPU is treated as doing real work (encoding, sync, game loop, …).
+const BUSY_CPU_PERCENT = 5
 const TAB_PRELOAD_PATH = join(__dirname, '../preload/tab.js')
 
 export interface Tab {
@@ -26,6 +32,9 @@ export interface Tab {
   loading: boolean
   suspended: boolean
   lastActiveAt: number
+  /** Last time the tab was seen doing background work (playing media, downloading, …); used as a grace period before idle-suspending. */
+  lastBusyAt: number
+  mediaPlaying: boolean
   memoryMB: number | null
   view: WebContentsView | null
   aiGroup: { label: string; color: string } | null
@@ -33,11 +42,22 @@ export interface Tab {
   isFullscreen: boolean
 }
 
+interface PendingCertWarning {
+  tabId: string
+  url: string
+  key: string
+}
+
 export class TabManager {
   private tabs: Tab[] = []
+  // Certificates the user chose to trust for this session only: hostname|fingerprint for page
+  // navigations, bare fingerprint for the resources that page loads.
+  private trustedCerts = new Set<string>()
+  private trustedFingerprints = new Set<string>()
+  private pendingCertWarnings = new Map<string, PendingCertWarning>()
+  private certWarningListener: (payload: CertWarningPayload) => void = () => {}
   private activeId: string | null = null
-  private toolbarHeight = 0
-  private panelWidth = 0
+  private contentRect: Rectangle | null = null
   private closedStack: { url: string }[] = []
   private groups = new Map<string, string[]>()
   private currentlyVisibleIds: string[] = []
@@ -46,6 +66,7 @@ export class TabManager {
   private onChange: () => void = () => {}
   private aiBusyListener: (busy: boolean, message: string | null) => void = () => {}
   private fullscreenListener: (hidden: boolean) => void = () => {}
+  private history: HistoryManager | null = null
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -63,23 +84,90 @@ export class TabManager {
     this.fullscreenListener = cb
   }
 
-  setToolbarHeight(px: number): void {
-    this.toolbarHeight = px
-    this.reflowVisible()
+  setHistory(history: HistoryManager): void {
+    this.history = history
   }
 
-  setPanelWidth(px: number): void {
-    this.panelWidth = px
+  setOnCertWarning(cb: (payload: CertWarningPayload) => void): void {
+    this.certWarningListener = cb
+  }
+
+  resolveCertWarning(id: string, proceed: boolean): void {
+    const pending = this.pendingCertWarnings.get(id)
+    if (!pending) return
+    this.pendingCertWarnings.delete(id)
+    const tab = this.get(pending.tabId)
+    if (!tab) return
+
+    if (proceed) {
+      this.trustedCerts.add(pending.key)
+      this.trustedFingerprints.add(pending.key.slice(pending.key.indexOf('|') + 1))
+      this.loadInTab(tab, pending.url)
+    } else if (tab.view?.webContents.navigationHistory.canGoBack()) {
+      tab.view.webContents.navigationHistory.goBack()
+    } else {
+      this.loadInTab(tab, DEFAULT_NEW_TAB_URL)
+    }
+  }
+
+  private handleCertificateError(
+    tab: Tab,
+    event: Electron.Event,
+    url: string,
+    error: string,
+    fingerprint: string,
+    callback: (isTrusted: boolean) => void,
+    isMainFrame: boolean
+  ): void {
+    // Subresources (CSS/JS/websockets, possibly on another port of the same machine) can't be
+    // prompted for, so they're allowed only when they present a certificate the user already accepted.
+    if (!isMainFrame) {
+      if (this.trustedFingerprints.has(fingerprint)) {
+        event.preventDefault()
+        callback(true)
+      }
+      return
+    }
+    let host: string
+    try {
+      host = new URL(url).hostname
+    } catch {
+      return
+    }
+    const key = `${host}|${fingerprint}`
+
+    event.preventDefault()
+    if (this.trustedCerts.has(key)) {
+      callback(true)
+      return
+    }
+    callback(false)
+
+    for (const p of this.pendingCertWarnings.values()) {
+      if (p.tabId === tab.id && p.key === key) return
+    }
+    const id = randomUUID()
+    this.pendingCertWarnings.set(id, { tabId: tab.id, url, key })
+    this.certWarningListener({ id, url, host, error })
+  }
+
+  /** The area the UI reserves for page views, as measured by the renderer (depends on the tab layout). */
+  setContentBounds(rect: Rectangle): void {
+    this.contentRect = rect
     this.reflowVisible()
   }
 
   private contentBounds(): Rectangle {
-    const [width, height] = this.win.getContentSize()
+    const [winW, winH] = this.win.getContentSize()
+    const r = this.contentRect
+    if (!r) return { x: 0, y: 0, width: winW, height: winH }
+    const x = Math.min(Math.max(0, r.x), winW)
+    const y = Math.min(Math.max(0, r.y), winH)
     return {
-      x: 0,
-      y: this.toolbarHeight,
-      width: Math.max(0, width - this.panelWidth),
-      height: Math.max(0, height - this.toolbarHeight)
+      x,
+      y,
+      width: Math.max(0, Math.min(r.width, winW - x)),
+      height: Math.max(0, Math.min(r.height, winH - y))
     }
   }
 
@@ -114,8 +202,15 @@ export class TabManager {
     })
     tab.view = view
     tab.suspended = false
+    tab.mediaPlaying = false
 
     const wc = view.webContents
+    wc.on('media-started-playing', () => {
+      tab.mediaPlaying = true
+    })
+    wc.on('media-paused', () => {
+      tab.mediaPlaying = false
+    })
     wc.on('did-start-loading', () => {
       tab.loading = true
       this.onChange()
@@ -126,17 +221,22 @@ export class TabManager {
     })
     wc.on('page-title-updated', (_e, title) => {
       tab.title = title
+      this.history?.updatePage(wc.getURL(), { title })
       this.onChange()
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
       tab.favicon = favicons[0] ?? null
+      this.history?.updatePage(wc.getURL(), { favicon: tab.favicon })
       this.onChange()
     })
     wc.on('did-navigate', (_e, navUrl) => {
       tab.url = navUrl
+      this.history?.recordVisit(navUrl)
       this.onChange()
     })
-    wc.on('did-navigate-in-page', (_e, navUrl) => {
+    wc.on('did-navigate-in-page', (_e, navUrl, isMainFrame) => {
+      // SPA route changes are real visits; a bare #anchor jump on the same page is not.
+      if (isMainFrame && stripFragment(navUrl) !== stripFragment(tab.url)) this.history?.recordVisit(navUrl)
       tab.url = navUrl
       this.onChange()
     })
@@ -146,13 +246,16 @@ export class TabManager {
       tab.title = `Falha ao carregar (${desc})`
       this.onChange()
     })
-    wc.on('before-input-event', (_e, input) => {
+    wc.on('certificate-error', (event, errUrl, error, certificate, callback, isMainFrame) =>
+      this.handleCertificateError(tab, event, errUrl, error, certificate.fingerprint, callback, isMainFrame)
+    )
+    wc.on('before-input-event', (e, input) => {
       if (input.type !== 'keyDown') return
       if (input.key === 'F12') {
         this.toggleDevTools(tab.id)
         return
       }
-      this.handleShortcut(input, tab.id)
+      if (this.handleShortcut(input, tab.id)) e.preventDefault()
     })
     wc.on('context-menu', (_e, params) => this.showPageContextMenu(wc, params))
     wc.on('focus', () => this.setFocusedPane(tab.id))
@@ -231,8 +334,20 @@ export class TabManager {
       return true
     }
     const ctrl = input.control || input.meta
-    if (!ctrl) return false
     const key = input.key.toLowerCase()
+    if (key === 'f5' || (ctrl && key === 'r')) {
+      const id = tabId ?? this.activeId
+      if (id) {
+        if (ctrl || input.shift) this.hardReload(id)
+        else this.reload(id)
+      }
+      return true
+    }
+    if (!ctrl) return false
+    if (!input.shift && key === 'h') {
+      this.openInternal(HISTORY_URL)
+      return true
+    }
     if (input.shift && key === 't') {
       this.reopenLastClosed()
       return true
@@ -280,7 +395,12 @@ export class TabManager {
       enabled: wc.navigationHistory.canGoForward(),
       click: () => wc.navigationHistory.goForward()
     })
-    items.push({ label: 'Recarregar', click: () => wc.reload() })
+    items.push({ label: 'Recarregar', accelerator: 'F5', click: () => wc.reload() })
+    items.push({
+      label: 'Recarregar ignorando o cache',
+      accelerator: 'Ctrl+F5',
+      click: () => wc.reloadIgnoringCache()
+    })
     items.push({ type: 'separator' })
     items.push({
       label: 'Inspecionar elemento',
@@ -299,6 +419,7 @@ export class TabManager {
     const items: MenuItemConstructorOptions[] = [
       { label: 'Nova aba', click: () => this.create() },
       { label: 'Recarregar', click: () => this.reload(id) },
+      { label: 'Recarregar ignorando o cache', click: () => this.hardReload(id) },
       { label: 'Duplicar aba', click: () => this.duplicate(id) },
       { type: 'separator' }
     ]
@@ -320,19 +441,26 @@ export class TabManager {
     Menu.buildFromTemplate(items).popup({ window: this.win })
   }
 
-  create(rawUrl?: string, options: { activate?: boolean } = {}): string {
-    const { activate = true } = options
+  /** Creates a tab. With `restored`, an external page is left as a suspended placeholder that only loads once activated. */
+  create(
+    rawUrl?: string,
+    options: { activate?: boolean; restored?: { title: string; favicon: string | null } } = {}
+  ): string {
+    const { activate = true, restored } = options
     const id = randomUUID()
     const url = normalizeUrlOrNull(rawUrl || '') || DEFAULT_NEW_TAB_URL
     const internal = isInternalUrl(url)
+    const placeholder = !!restored && !internal
     const tab: Tab = {
       id,
       url,
-      title: internal ? internalTitle(url) : 'Nova aba',
-      favicon: null,
-      loading: !internal,
-      suspended: false,
+      title: internal ? internalTitle(url) : restored?.title || (restored ? domainOf(url) : 'Nova aba'),
+      favicon: restored?.favicon ?? null,
+      loading: !internal && !placeholder,
+      suspended: placeholder,
       lastActiveAt: Date.now(),
+      lastBusyAt: 0,
+      mediaPlaying: false,
       memoryMB: null,
       view: null,
       aiGroup: null,
@@ -340,10 +468,48 @@ export class TabManager {
       isFullscreen: false
     }
     this.tabs.push(tab)
-    if (!internal) this.createView(tab, url)
+    if (!internal && !placeholder) this.createView(tab, url)
     if (activate) this.activate(id)
     else this.onChange()
     return id
+  }
+
+  /** Opens a lumo:// page, reusing the tab that already shows it. */
+  openInternal(url: string): void {
+    const existing = this.tabs.find((t) => t.url === url)
+    if (existing) this.activate(existing.id)
+    else this.create(url)
+  }
+
+  getSessionState(): SavedSession | null {
+    if (this.tabs.length === 0) return null
+    const indexById = new Map(this.tabs.map((t, i) => [t.id, i]))
+    const groups = [...this.groups.values()].map((ids) =>
+      ids.map((id) => indexById.get(id)).filter((i): i is number => i !== undefined)
+    )
+    return {
+      tabs: this.tabs.map((t) => ({ url: t.url, title: t.title, favicon: t.favicon })),
+      activeIndex: indexById.get(this.activeId ?? '') ?? 0,
+      groups
+    }
+  }
+
+  restoreSession(session: SavedSession): void {
+    const ids = session.tabs.map((t) =>
+      this.create(t.url, { activate: false, restored: { title: t.title, favicon: t.favicon } })
+    )
+    for (const group of session.groups) this.restoreGroup(group.map((i) => ids[i]))
+    this.activate(ids[session.activeIndex] ?? ids[0])
+  }
+
+  /** Rebuilds a split-view group without activating (and therefore loading) its members. */
+  private restoreGroup(ids: string[]): void {
+    const members = ids.filter((id) => id && this.get(id)).slice(0, MAX_SPLIT_SIZE)
+    if (members.length < 2) return
+    const groupId = randomUUID()
+    this.groups.set(groupId, members)
+    for (const id of members) this.get(id)!.splitGroupId = groupId
+    this.makeGroupContiguous(groupId)
   }
 
   duplicate(id: string): void {
@@ -566,6 +732,11 @@ export class TabManager {
     this.get(id)?.view?.webContents.reload()
   }
 
+  /** Reloads bypassing the HTTP cache for the page and its subresources, refreshing the cached copies. */
+  hardReload(id: string): void {
+    this.get(id)?.view?.webContents.reloadIgnoringCache()
+  }
+
   suspend(id: string): void {
     const tab = this.get(id)
     if (!tab || tab.suspended || !tab.view || this.currentlyVisibleIds.includes(id)) return
@@ -593,6 +764,20 @@ export class TabManager {
       if (mb !== undefined) tab.memoryMB = mb
     }
     this.onChange()
+  }
+
+  /** Whether the tab is doing something the user wouldn't want interrupted by suspending it. */
+  isBusy(tab: Tab, cpuPercent: number, isDownloading: (wc: Electron.WebContents) => boolean): boolean {
+    const wc = tab.view?.webContents
+    if (!wc || wc.isDestroyed()) return false
+    return (
+      tab.mediaPlaying ||
+      wc.isCurrentlyAudible() ||
+      wc.isBeingCaptured() ||
+      wc.isLoading() ||
+      isDownloading(wc) ||
+      cpuPercent >= BUSY_CPU_PERCENT
+    )
   }
 
   idleCandidates(): Tab[] {
@@ -743,8 +928,14 @@ export function isInternalUrl(url: string): boolean {
   return url.startsWith('lumo://')
 }
 
+function stripFragment(url: string): string {
+  const i = url.indexOf('#')
+  return i === -1 ? url : url.slice(0, i)
+}
+
 function internalTitle(url: string): string {
   if (url === 'lumo://settings') return 'Configurações'
+  if (url === HISTORY_URL) return 'Histórico'
   return 'Nova aba'
 }
 

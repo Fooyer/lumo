@@ -8,8 +8,9 @@ interface Props {
   onActivate: (id: string) => void
   onClose: (id: string) => void
   onNewTab: () => void
-  onToggleManager: () => void
-  managerOpen: boolean
+  orientation?: 'horizontal' | 'vertical'
+  /** Vertical only: show favicons without titles. */
+  collapsed?: boolean
 }
 
 type DragZone = 'before' | 'after' | 'combine'
@@ -40,9 +41,10 @@ export default function TabStrip({
   onActivate,
   onClose,
   onNewTab,
-  onToggleManager,
-  managerOpen
+  orientation = 'horizontal',
+  collapsed = false
 }: Props): JSX.Element {
+  const vertical = orientation === 'vertical'
   const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
   const dwellRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null)
 
@@ -67,11 +69,13 @@ export default function TabStrip({
   }
 
   return (
-    <div className="tab-strip">
+    <div
+      className={`tab-strip ${vertical ? 'tab-strip--vertical' : ''} ${collapsed && vertical ? 'tab-strip--collapsed' : ''}`}
+    >
       <div
         className="tab-strip__tabs"
         onWheel={(e) => {
-          if (e.deltaY !== 0 && e.deltaX === 0) {
+          if (!vertical && e.deltaY !== 0 && e.deltaX === 0) {
             e.currentTarget.scrollLeft += e.deltaY
           }
         }}
@@ -122,7 +126,9 @@ export default function TabStrip({
                     // browser nulls out a native event's currentTarget as soon as dispatch ends,
                     // and this could otherwise run later inside the setDragOver updater below.
                     const rect = e.currentTarget.getBoundingClientRect()
-                    const ratio = (e.clientX - rect.left) / rect.width
+                    const ratio = vertical
+                      ? (e.clientY - rect.top) / rect.height
+                      : (e.clientX - rect.left) / rect.width
                     const positionZone: DragZone = ratio < 0.5 ? 'before' : 'after'
 
                     setDragOver((prev) => {
@@ -146,7 +152,7 @@ export default function TabStrip({
                     clearDwell()
                     setDragOver(null)
                   }}
-                  title={tab.url}
+                  title={vertical && collapsed ? `${tab.title || tab.domain}\n${tab.url}` : tab.url}
                 >
                   <FaviconImg
                     src={tab.favicon}
@@ -173,15 +179,9 @@ export default function TabStrip({
         })}
         <button className="tab-strip__new" onClick={onNewTab} title="Nova aba">
           <Plus size={15} strokeWidth={2.6} />
+          {vertical && !collapsed && <span className="tab-strip__new-label">Nova aba</span>}
         </button>
       </div>
-
-      <button
-        className={`manager-toggle ${managerOpen ? 'manager-toggle--active' : ''}`}
-        onClick={onToggleManager}
-      >
-        Abas &amp; RAM
-      </button>
     </div>
   )
 }

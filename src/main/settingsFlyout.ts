@@ -1,10 +1,12 @@
-import { BrowserWindow, screen } from 'electron'
+import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { IPC, type AnchorBounds } from '../shared/ipc'
+import { positionFlyout } from './flyoutPosition'
 
+const T0 = Date.now(); const L = (m) => console.log(`[FLY +${Date.now()-T0}ms] ${m}`)
 const FLYOUT_WIDTH = 340
-const FLYOUT_HEIGHT = 420
+const FLYOUT_HEIGHT = 560
 
 export class SettingsFlyout {
   private win: BrowserWindow | null = null
@@ -48,6 +50,8 @@ export class SettingsFlyout {
       })
     }
 
+    for (const ev of ['show','hide','focus','blur','ready-to-show'] as const) this.win.on(ev as any, () => L('win '+ev+' isOpen='+this.isOpen))
+    this.win.webContents.on('did-finish-load', () => L('did-finish-load'))
     this.win.on('blur', () => {
       this.close()
     })
@@ -56,10 +60,14 @@ export class SettingsFlyout {
   }
 
   private initParentListeners(): void {
-    this.parent.on('move', () => this.closeImmediate())
-    this.parent.on('resize', () => this.closeImmediate())
-    this.parent.on('minimize', () => this.closeImmediate())
+    this.parent.on('move', () => { L('PARENT move'); this.closeImmediate() })
+    this.parent.on('resize', () => { L('PARENT resize'); this.closeImmediate() })
+    this.parent.on('minimize', () => { L('PARENT minimize'); this.closeImmediate() })
     this.parent.on('close', () => this.destroy())
+  }
+
+  send(channel: string, payload: unknown): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.send(channel, payload)
   }
 
   toggle(anchorBounds?: AnchorBounds): void {
@@ -74,6 +82,7 @@ export class SettingsFlyout {
   }
 
   open(anchorBounds?: AnchorBounds): void {
+    L("open() called")
     if (this.hideTimer) {
       clearTimeout(this.hideTimer)
       this.hideTimer = null
@@ -84,28 +93,10 @@ export class SettingsFlyout {
     }
     if (!this.win) return
 
-    const parentBounds = this.parent.getContentBounds()
-    let popupX: number
-    let popupY: number
-
-    if (anchorBounds) {
-      const anchorRight = parentBounds.x + anchorBounds.x + anchorBounds.width
-      const anchorBottom = parentBounds.y + anchorBounds.y + anchorBounds.height
-      popupX = Math.round(anchorRight - FLYOUT_WIDTH)
-      popupY = Math.round(anchorBottom + 4)
-    } else {
-      popupX = Math.round(parentBounds.x + parentBounds.width - FLYOUT_WIDTH - 12)
-      popupY = Math.round(parentBounds.y + 78)
-    }
-
-    const display = screen.getDisplayMatching(parentBounds)
-    const workArea = display.workArea
-    if (popupX + FLYOUT_WIDTH > workArea.x + workArea.width) {
-      popupX = workArea.x + workArea.width - FLYOUT_WIDTH - 8
-    }
-    if (popupX < workArea.x) {
-      popupX = workArea.x + 8
-    }
+    const { x: popupX, y: popupY } = positionFlyout(this.parent, anchorBounds, {
+      width: FLYOUT_WIDTH,
+      height: FLYOUT_HEIGHT
+    })
 
     this.win.setBounds({
       x: popupX,
@@ -123,6 +114,7 @@ export class SettingsFlyout {
   }
 
   close(): void {
+    L("close() called isOpen="+this.isOpen)
     if (this.hideTimer) {
       clearTimeout(this.hideTimer)
       this.hideTimer = null

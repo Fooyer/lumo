@@ -3,12 +3,15 @@ import {
   X,
   Bookmark,
   Cpu,
-  KeyRound,
+  History,
+  LayoutPanelLeft,
+  MemoryStick,
   SlidersHorizontal,
   Palette
 } from 'lucide-react'
 import type { Settings } from '@shared/ipc'
 import { lighten } from '../lib/color'
+import LayoutPicker from './LayoutPicker'
 
 const PRESETS: { name: string; accent: string; danger: string }[] = [
   { name: 'Azul & Vermelho', accent: '#2e6bff', danger: '#ff4d6a' },
@@ -22,6 +25,16 @@ const PRESETS: { name: string; accent: string; danger: string }[] = [
 export default function SettingsFlyout(): JSX.Element {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [isOpen, setIsOpen] = useState(false)
+  const [memoryMB, setMemoryMB] = useState<number | null>(null)
+
+  // The flyout is its own web contents and doesn't get the main window's memory broadcasts, so poll while open.
+  useEffect(() => {
+    if (!isOpen) return
+    const read = (): void => void window.lumo.getMemory().then((m) => setMemoryMB(m?.totalMB ?? null))
+    read()
+    const timer = setInterval(read, 3000)
+    return () => clearInterval(timer)
+  }, [isOpen])
 
   const applyThemeVars = (s: Settings): void => {
     const root = document.documentElement
@@ -57,9 +70,15 @@ export default function SettingsFlyout(): JSX.Element {
       setIsOpen(false)
     })
 
+    const offChanged = window.lumo.onSettingsChanged((s) => {
+      setSettings(s)
+      applyThemeVars(s)
+    })
+
     return () => {
       offShow()
       offClose()
+      offChanged()
     }
   }, [])
 
@@ -154,6 +173,18 @@ export default function SettingsFlyout(): JSX.Element {
             </div>
           </div>
 
+          {/* Layout das abas */}
+          <div className="settings-flyout-group">
+            <div className="settings-flyout-group-title">
+              <LayoutPanelLeft size={13} strokeWidth={2.4} />
+              <span>Layout das abas</span>
+            </div>
+            <LayoutPicker
+              value={settings?.tabLayout ?? 'top'}
+              onChange={(tabLayout) => handleUpdate({ tabLayout })}
+            />
+          </div>
+
           {/* Toggles principais */}
           <div className="settings-flyout-group">
             <div className="settings-flyout-toggles">
@@ -195,24 +226,38 @@ export default function SettingsFlyout(): JSX.Element {
                 </div>
               </label>
 
-              {/* Salvar senhas */}
+              {/* Restaurar sessão */}
               <label className="settings-flyout-toggle-row">
                 <div className="settings-flyout-toggle-icon">
-                  <KeyRound size={15} strokeWidth={2.2} />
+                  <History size={15} strokeWidth={2.2} />
                 </div>
                 <div className="settings-flyout-toggle-info">
-                  <span className="settings-flyout-toggle-label">Salvar senhas</span>
-                  <span className="settings-flyout-toggle-desc">Sugerir salvar ao fazer login</span>
+                  <span className="settings-flyout-toggle-label">Restaurar abas</span>
+                  <span className="settings-flyout-toggle-desc">Continuar de onde parou ao abrir</span>
                 </div>
                 <div className="settings-flyout-switch">
                   <input
                     type="checkbox"
-                    checked={settings?.autoSavePasswordsEnabled ?? false}
-                    onChange={(e) => handleUpdate({ autoSavePasswordsEnabled: e.target.checked })}
+                    checked={settings?.restoreSession ?? false}
+                    onChange={(e) => handleUpdate({ restoreSession: e.target.checked })}
                   />
                   <span className="settings-flyout-slider" />
                 </div>
               </label>
+
+              {/* Uso de RAM */}
+              <div className="settings-flyout-toggle-row">
+                <div className="settings-flyout-toggle-icon">
+                  <MemoryStick size={15} strokeWidth={2.2} />
+                </div>
+                <div className="settings-flyout-toggle-info">
+                  <span className="settings-flyout-toggle-label">Uso de RAM</span>
+                  <span className="settings-flyout-toggle-desc">Total usado pelo Lumo</span>
+                </div>
+                <span className="settings-flyout-ram">
+                  {memoryMB !== null ? `${memoryMB} MB` : '…'}
+                </span>
+              </div>
             </div>
           </div>
         </div>
