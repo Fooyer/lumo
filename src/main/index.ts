@@ -63,6 +63,26 @@ const uaPlatform =
       : 'X11; Linux x86_64'
 app.userAgentFallback = `Mozilla/5.0 (${uaPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeMajor}.0.0.0 Safari/537.36`
 
+// On Linux, Google's sign-in answers "This browser or app may not be secure" to this Chromium build right
+// after the e-mail step; Windows is accepted. Firefox sends no client hints and is let through, so on
+// Linux — and only on accounts.google.com — Lumo presents itself as Firefox and drops the Sec-CH-UA* headers.
+// It's decided at run time, so the same build behaves right on both systems.
+const FIREFOX_LINUX_UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0'
+
+function presentAsFirefoxToGoogleSignIn(): void {
+  if (process.platform !== 'linux') return
+  session.defaultSession.webRequest.onBeforeSendHeaders(
+    { urls: ['https://accounts.google.com/*'] },
+    (details, callback) => {
+      const headers: Record<string, string> = { ...details.requestHeaders, 'User-Agent': FIREFOX_LINUX_UA }
+      for (const name of Object.keys(headers)) {
+        if (name.toLowerCase().startsWith('sec-ch-ua')) delete headers[name]
+      }
+      callback({ requestHeaders: headers })
+    }
+  )
+}
+
 installWidevineFromBrowser()
 
 // Must run before the app is ready / any window is created — can't be toggled at runtime afterwards.
@@ -370,6 +390,7 @@ app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.lumo.browser')
 
   downloadsManager = new DownloadsManager(join(app.getPath('userData'), 'lumo-downloads.json'))
+  presentAsFirefoxToGoogleSignIn()
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

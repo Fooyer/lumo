@@ -6,7 +6,7 @@ import { app, components } from 'electron'
 // Google no longer serves the standalone Widevine CDM to non-Chrome clients on Windows, so the
 // component updater reports it as "not installed" and DRM playback (Crunchyroll, Netflix, …) fails
 // with "Unsupported keySystem". Chromium registers any valid CDM found in <userData>/WidevineCdm,
-// so we reuse the copy that Chrome/Edge/Brave already keep on this machine (Windows and Linux).
+// so we reuse the copy that Edge/Chrome/Brave already keep on this machine (Windows and Linux).
 const CDM_ARCH = process.arch === 'arm64' ? 'arm64' : 'x64'
 const CDM_BINARY =
   process.platform === 'win32'
@@ -80,27 +80,44 @@ function browserApplicationDirs(): string[] {
   ].filter((p): p is string => !!p)
 }
 
-/** Chrome keeps its CDM in <version>/WidevineCdm on Windows, but in a single WidevineCdm folder on Linux. */
+/**
+ * The newest CDM a Linux browser offers: the copy shipped with the app (Flatpak runtime files or a native
+ * install next to the binary) or a newer <version> folder its own updater dropped in the profile.
+ */
+function newestLinuxCdm(shippedDirs: string[], profileDirs: string[]): CdmCopy | null {
+  const shipped = newestCdmAmong(shippedDirs)
+  const updated = newestCdmIn(profileDirs, '')
+  return updated && (!shipped || compareVersions(updated.version, shipped.version) > 0) ? updated : shipped
+}
+
+/** Windows keeps the CDM in <version>/WidevineCdm; Linux in a single WidevineCdm folder (Flatpak on Bazzite). */
 function findBrowserCdm(): CdmCopy | null {
   if (process.platform === 'win32') return newestCdmIn(browserApplicationDirs(), 'WidevineCdm')
   if (process.platform !== 'linux') return null
   const home = homedir()
-  // The Flatpak build (the usual one on immutable distros such as Bazzite) ships the CDM in its runtime
-  // files; a native install puts it next to the binary; Chrome's own updater drops newer <version> folders
-  // in the profile directory.
-  const shipped = newestCdmAmong([
-    '/var/lib/flatpak/app/com.google.Chrome/x86_64/stable/active/files/extra/WidevineCdm',
-    join(home, '.local/share/flatpak/app/com.google.Chrome/x86_64/stable/active/files/extra/WidevineCdm'),
-    '/opt/google/chrome/WidevineCdm'
-  ])
-  const updated = newestCdmIn(
-    [
-      join(home, '.var/app/com.google.Chrome/config/google-chrome/WidevineCdm'),
-      join(home, '.config/google-chrome/WidevineCdm')
-    ],
-    ''
+  const flatpakExtra = (id: string): string[] => [
+    `/var/lib/flatpak/app/${id}/x86_64/stable/active/files/extra/WidevineCdm`,
+    join(home, `.local/share/flatpak/app/${id}/x86_64/stable/active/files/extra/WidevineCdm`)
+  ]
+  // Edge first: it's the browser Google's sign-in and the streaming sites accepted this build alongside,
+  // while the CDM copied from Chrome went with a "This browser may not be secure" on Google login.
+  // Chrome is only the fallback when Edge isn't installed.
+  return (
+    newestLinuxCdm(
+      [...flatpakExtra('com.microsoft.Edge'), '/opt/microsoft/msedge/WidevineCdm'],
+      [
+        join(home, '.var/app/com.microsoft.Edge/config/microsoft-edge/WidevineCdm'),
+        join(home, '.config/microsoft-edge/WidevineCdm')
+      ]
+    ) ??
+    newestLinuxCdm(
+      [...flatpakExtra('com.google.Chrome'), '/opt/google/chrome/WidevineCdm'],
+      [
+        join(home, '.var/app/com.google.Chrome/config/google-chrome/WidevineCdm'),
+        join(home, '.config/google-chrome/WidevineCdm')
+      ]
+    )
   )
-  return updated && (!shipped || compareVersions(updated.version, shipped.version) > 0) ? updated : shipped
 }
 
 /** Must run before the app is ready, i.e. before Chromium registers its components. */
@@ -110,7 +127,13 @@ export function installWidevineFromBrowser(): void {
     if (!source) return
     const target = join(app.getPath('userData'), 'WidevineCdm')
     const installed = newestCdmIn([target], '')
-    if (installed && compareVersions(installed.version, source.version) >= 0) return
+    if (installed) {
+      const order = compareVersions(installed.version, source.version)
+      // Windows only ever moves forward. On Linux the source is chosen by preference (Edge over Chrome), so
+      // a copy of a different version — say one taken from Chrome earlier — is replaced, not kept.
+      if (process.platform === 'linux' ? order === 0 : order >= 0) return
+      if (process.platform === 'linux') fs.rmSync(target, { recursive: true, force: true })
+    }
     fs.cpSync(source.dir, join(target, source.version), { recursive: true })
   } catch (err) {
     console.warn('[lumo] Não foi possível instalar o Widevine a partir do navegador instalado:', err)
@@ -126,7 +149,7 @@ export async function whenWidevineReady(): Promise<void> {
       new Promise((resolve) => setTimeout(resolve, WIDEVINE_WAIT_MS))
     ])
     if (components.status()[components.WIDEVINE_CDM_ID]?.status === 'not-installed') {
-      console.warn('[lumo] Widevine indisponível: instale o Google Chrome (ou o Microsoft Edge no Windows) para tocar conteúdo com DRM.')
+      console.warn('[lumo] Widevine indisponível: instale o Microsoft Edge (ou o Google Chrome) para tocar conteúdo com DRM.')
     }
   } catch (err) {
     console.warn('[lumo] Falha ao preparar o Widevine:', err)
