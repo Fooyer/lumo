@@ -1,12 +1,17 @@
 import fs from 'fs'
+import { homedir } from 'os'
 import { join } from 'path'
 import { app, components } from 'electron'
 
 // Google no longer serves the standalone Widevine CDM to non-Chrome clients on Windows, so the
 // component updater reports it as "not installed" and DRM playback (Crunchyroll, Netflix, …) fails
 // with "Unsupported keySystem". Chromium registers any valid CDM found in <userData>/WidevineCdm,
-// so we reuse the copy that Chrome/Edge/Brave already keep on this machine.
-const CDM_DLL = join('_platform_specific', 'win_x64', 'widevinecdm.dll')
+// so we reuse the copy that Chrome/Edge/Brave already keep on this machine (Windows and Linux).
+const CDM_ARCH = process.arch === 'arm64' ? 'arm64' : 'x64'
+const CDM_BINARY =
+  process.platform === 'win32'
+    ? join('_platform_specific', `win_${CDM_ARCH}`, 'widevinecdm.dll')
+    : join('_platform_specific', `linux_${CDM_ARCH}`, 'libwidevinecdm.so')
 const WIDEVINE_WAIT_MS = 5_000
 
 interface CdmCopy {
@@ -27,7 +32,7 @@ function compareVersions(a: string, b: string): number {
 function readCdm(dir: string): CdmCopy | null {
   try {
     const manifest = JSON.parse(fs.readFileSync(join(dir, 'manifest.json'), 'utf-8'))
-    if (typeof manifest.version !== 'string' || !fs.existsSync(join(dir, CDM_DLL))) return null
+    if (typeof manifest.version !== 'string' || !fs.existsSync(join(dir, CDM_BINARY))) return null
     return { version: manifest.version, dir }
   } catch {
     return null
@@ -51,6 +56,15 @@ function newestCdmIn(parents: string[], sub: string): CdmCopy | null {
   return best
 }
 
+function newestCdmAmong(dirs: string[]): CdmCopy | null {
+  let best: CdmCopy | null = null
+  for (const dir of dirs) {
+    const cdm = readCdm(dir)
+    if (cdm && (!best || compareVersions(cdm.version, best.version) > 0)) best = cdm
+  }
+  return best
+}
+
 function browserApplicationDirs(): string[] {
   const programFiles = process.env['ProgramFiles']
   const programFilesX86 = process.env['ProgramFiles(x86)']
@@ -66,11 +80,33 @@ function browserApplicationDirs(): string[] {
   ].filter((p): p is string => !!p)
 }
 
+/** Chrome keeps its CDM in <version>/WidevineCdm on Windows, but in a single WidevineCdm folder on Linux. */
+function findBrowserCdm(): CdmCopy | null {
+  if (process.platform === 'win32') return newestCdmIn(browserApplicationDirs(), 'WidevineCdm')
+  if (process.platform !== 'linux') return null
+  const home = homedir()
+  // The Flatpak build (the usual one on immutable distros such as Bazzite) ships the CDM in its runtime
+  // files; a native install puts it next to the binary; Chrome's own updater drops newer <version> folders
+  // in the profile directory.
+  const shipped = newestCdmAmong([
+    '/var/lib/flatpak/app/com.google.Chrome/x86_64/stable/active/files/extra/WidevineCdm',
+    join(home, '.local/share/flatpak/app/com.google.Chrome/x86_64/stable/active/files/extra/WidevineCdm'),
+    '/opt/google/chrome/WidevineCdm'
+  ])
+  const updated = newestCdmIn(
+    [
+      join(home, '.var/app/com.google.Chrome/config/google-chrome/WidevineCdm'),
+      join(home, '.config/google-chrome/WidevineCdm')
+    ],
+    ''
+  )
+  return updated && (!shipped || compareVersions(updated.version, shipped.version) > 0) ? updated : shipped
+}
+
 /** Must run before the app is ready, i.e. before Chromium registers its components. */
 export function installWidevineFromBrowser(): void {
-  if (process.platform !== 'win32') return
   try {
-    const source = newestCdmIn(browserApplicationDirs(), 'WidevineCdm')
+    const source = findBrowserCdm()
     if (!source) return
     const target = join(app.getPath('userData'), 'WidevineCdm')
     const installed = newestCdmIn([target], '')
@@ -90,7 +126,7 @@ export async function whenWidevineReady(): Promise<void> {
       new Promise((resolve) => setTimeout(resolve, WIDEVINE_WAIT_MS))
     ])
     if (components.status()[components.WIDEVINE_CDM_ID]?.status === 'not-installed') {
-      console.warn('[lumo] Widevine indisponível: instale o Google Chrome ou o Microsoft Edge para tocar conteúdo com DRM.')
+      console.warn('[lumo] Widevine indisponível: instale o Google Chrome (ou o Microsoft Edge no Windows) para tocar conteúdo com DRM.')
     }
   } catch (err) {
     console.warn('[lumo] Falha ao preparar o Widevine:', err)
