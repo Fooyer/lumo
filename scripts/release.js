@@ -1,7 +1,12 @@
 // Builds Lumo and publishes it as a GitHub Release (electron-updater then offers it to installed copies).
 //
 //   npm run release                  build + publish the version in package.json
+//   npm run release -- --append      add this machine's build to a release that already exists
 //   npm run release -- --overwrite   replace the files of a release that already exists (use with care)
+//
+// It builds for the OS it runs on (the castLabs Electron in node_modules is a per-OS binary, and the
+// Windows build needs the EVS/VMP signing): run it on Windows for the .exe installer and on Linux for the
+// AppImage. Run one, then the other with --append — both end up in the same release.
 //
 // The token comes from GH_TOKEN in the environment or in a git-ignored ".env" file at the project root;
 // failing that, from the GitHub CLI login (`gh auth login`).
@@ -13,6 +18,9 @@ const root = path.join(__dirname, '..')
 const pkg = require('../package.json')
 const OWNER_REPO = 'Fooyer/lumo'
 const overwrite = process.argv.includes('--overwrite')
+const append = process.argv.includes('--append')
+const PLATFORM_FLAGS = { win32: '--win', linux: '--linux' }
+const platformFlag = PLATFORM_FLAGS[process.platform]
 
 class ReleaseError extends Error {}
 
@@ -59,12 +67,17 @@ async function main() {
   const unpushed = run('git', ['rev-list', '--count', 'origin/main..HEAD']).stdout.trim()
   if (unpushed !== '0') fail(`Há commits locais sem push (${unpushed || '?'}). Rode "git push" antes de publicar.`)
 
+  if (!platformFlag) fail(`Sem build de release para ${process.platform}: só Windows e Linux.`)
+
   const tag = `v${pkg.version}`
   const headers = { Authorization: `Bearer ${process.env.GH_TOKEN}`, 'User-Agent': 'lumo-release' }
   const res = await fetch(`https://api.github.com/repos/${OWNER_REPO}/releases/tags/${tag}`, { headers })
   if (res.status === 401) fail('O GitHub recusou o token (inválido ou expirado).')
-  if (res.status === 200 && !overwrite) {
-    fail(`O release ${tag} já existe. Aumente "version" no package.json (ou use --overwrite para trocar os arquivos).`)
+  if (res.status === 200 && !overwrite && !append) {
+    fail(
+      `O release ${tag} já existe. Aumente "version" no package.json, use --append para juntar o build ` +
+        'deste sistema a ele, ou --overwrite para trocar os arquivos.'
+    )
   }
 
   console.log(`\n▶ Publicando o Lumo ${tag} em ${OWNER_REPO}\n`)
@@ -72,7 +85,7 @@ async function main() {
   delete env.ELECTRON_RUN_AS_NODE
   const steps = [
     ['npm', ['run', 'build']],
-    ['npx', ['electron-builder', '--win', '--publish', 'always']]
+    ['npx', ['electron-builder', platformFlag, '--publish', 'always']]
   ]
   for (const [cmd, args] of steps) {
     const r = spawnSync(cmd, args, { cwd: root, env, stdio: 'inherit', shell: process.platform === 'win32' })

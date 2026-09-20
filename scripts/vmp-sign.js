@@ -5,6 +5,8 @@
 const { spawnSync } = require('child_process')
 
 exports.default = async function vmpSign(context) {
+  // EVS/VMP exists for Windows and macOS only; the Linux CDM doesn't check for it.
+  if (context.electronPlatformName === 'linux') return
   if (process.env.SKIP_VMP_SIGN === '1') {
     console.warn('  • SKIP_VMP_SIGN=1: skipping VMP signing — DRM playback will not work in this build')
     return

@@ -18,14 +18,27 @@ asar: true
 electronDist: node_modules/electron/dist
 electronVersion: 33.4.11
 
-# The castLabs build must be VMP-signed (EVS) after packaging, or DRM sites reject it.
+# The castLabs build must be VMP-signed (EVS) after packaging, or DRM sites reject it (Windows/macOS only).
 afterSign: scripts/vmp-sign.js
+# Linux: swaps the executable for a launcher that passes the flags Chromium needs there (see the script).
+afterPack: scripts/linux-launcher.js
 
 win:
   icon: resources/icon.png
   target:
     - target: nsis
       arch: x64
+
+linux:
+  icon: resources/icon.png
+  category: Network
+  synopsis: Navegador Lumo
+  target:
+    - target: AppImage
+      arch: x64
+
+appImage:
+  artifactName: Lumo-${version}.${ext}
 
 nsis:
   oneClick: true
