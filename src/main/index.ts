@@ -83,6 +83,10 @@ function presentAsFirefoxToGoogleSignIn(): void {
   )
 }
 
+// Chromium exposes FedCM (navigator.credentials.get({ identity })) but Electron has no dialog for it, so
+// "Sign in with Google" buttons that try it fail outright. Turning it off makes them fall back to the pop-up flow.
+app.commandLine.appendSwitch('disable-features', 'FedCm')
+
 installWidevineFromBrowser()
 
 // Must run before the app is ready / any window is created — can't be toggled at runtime afterwards.
