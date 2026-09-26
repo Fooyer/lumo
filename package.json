@@ -1,6 +1,6 @@
 {
   "name": "lumo",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Lumo — navegador inteligente (MVP)",
   "main": "./out/main/index.js",
   "author": "lumo",
@@ -13,7 +13,7 @@
     "dist": "npm run build && electron-builder --win --publish never",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
     "release": "node scripts/release.js",
-    "sign:vmp": "python -m castlabs_evs.vmp sign-pkg node_modules/electron/dist"
+    "sign:vmp": "python -m castlabs_evs.vmp sign-pkg --force node_modules/electron/dist"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^3.0.0",
