@@ -266,6 +266,18 @@ export default function SettingsPage({ settings, onChange, memory, tabs }: Props
           />
           Barra lateral compacta (só ícones)
         </label>
+        <label className="settings-toggle">
+          <input
+            type="checkbox"
+            checked={settings.autoHideAddressBar}
+            onChange={(e) => onChange({ autoHideAddressBar: e.target.checked })}
+          />
+          Ocultar a barra de endereço automaticamente
+        </label>
+        <p className="settings-hint">
+          Ela aparece, com uma animação, quando você leva o mouse à borda da janela: ao topo (sobre as abas) ou, no
+          layout inferior, às abas embaixo. Fica visível enquanto você digita.
+        </p>
       </section>
 
       <section className="settings-section">

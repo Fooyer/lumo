@@ -17,7 +17,8 @@ import {
   type SuggestionsFlyoutState,
   type SuggestionPickedEvent,
   type SuggestionHoverEvent,
-  type AnchorBounds
+  type AnchorBounds,
+  type EdgeState
 } from '../shared/ipc'
 
 const api = {
@@ -146,6 +147,7 @@ const api = {
   showDownloadInFolder: (id: string): void => ipcRenderer.send(IPC.downloadsShowInFolder, id),
   cancelDownload: (id: string): void => ipcRenderer.send(IPC.downloadsCancel, id),
   clearFinishedDownloads: (): void => ipcRenderer.send(IPC.downloadsClearFinished),
+  openDownloadsPage: (): void => ipcRenderer.send(IPC.downloadsOpenPage),
   toggleDownloadsFlyout: (anchorBounds?: AnchorBounds): void =>
     ipcRenderer.send(IPC.downloadsFlyoutToggle, anchorBounds),
   closeDownloadsFlyout: (): void =>
@@ -215,6 +217,13 @@ const api = {
     ipcRenderer.on(IPC.fullscreenChanged, listener)
     return () => ipcRenderer.removeListener(IPC.fullscreenChanged, listener)
   },
+  onEdgeState: (cb: (state: EdgeState) => void) => {
+    const listener = (_e: unknown, state: EdgeState): void => cb(state)
+    ipcRenderer.on(IPC.edgeState, listener)
+    return () => ipcRenderer.removeListener(IPC.edgeState, listener)
+  },
+  setAddressBarFocus: (focused: boolean): void => ipcRenderer.send(IPC.addressBarFocus, focused),
+  setAddressBarHeight: (height: number): void => ipcRenderer.send(IPC.addressBarHeight, height),
   setModalActive: (active: boolean): void => ipcRenderer.send(IPC.setModalActive, active),
   onAlertDialog: (cb: (payload: AlertDialogPayload) => void) => {
     const listener = (_e: unknown, payload: AlertDialogPayload): void => cb(payload)

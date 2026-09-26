@@ -73,11 +73,15 @@ export class SuggestionsFlyout {
     }
 
     const content = this.parent.getContentBounds()
+    const height = state.items.length * SUGGESTION_ROW_HEIGHT + SUGGESTIONS_FLYOUT_CHROME
+    // An input near the bottom edge (bottom tab layout) has no room below it: open the list upward instead.
+    const below = anchor.y + anchor.height + GAP_BELOW_INPUT
+    const y = below + height > content.height ? anchor.y - GAP_BELOW_INPUT - height : below
     win.setBounds({
       x: Math.round(content.x + anchor.x),
-      y: Math.round(content.y + anchor.y + anchor.height + GAP_BELOW_INPUT),
+      y: Math.round(content.y + Math.max(0, y)),
       width: Math.round(anchor.width),
-      height: state.items.length * SUGGESTION_ROW_HEIGHT + SUGGESTIONS_FLYOUT_CHROME
+      height
     })
 
     if (this.ready) win.webContents.send(IPC.suggestionsFlyoutState, state)

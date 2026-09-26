@@ -14,6 +14,9 @@ export const IPC = {
   tabsCombineSplit: 'tabs:combine-split',
   tabsRemoveFromSplit: 'tabs:remove-from-split',
   fullscreenChanged: 'ui:fullscreen-changed',
+  edgeState: 'ui:edge-state',
+  addressBarFocus: 'ui:address-bar-focus',
+  addressBarHeight: 'ui:address-bar-height',
   navigate: 'navigate:smart',
   tabsUpdated: 'tabs:updated',
   memoryUpdated: 'memory:updated',
@@ -45,6 +48,7 @@ export const IPC = {
   downloadsShowInFolder: 'downloads:show-in-folder',
   downloadsCancel: 'downloads:cancel',
   downloadsClearFinished: 'downloads:clear-finished',
+  downloadsOpenPage: 'downloads:open-page',
   downloadsFlyoutToggle: 'downloads:flyout-toggle',
   downloadsFlyoutClose: 'downloads:flyout-close',
   downloadsFlyoutChanged: 'downloads:flyout-changed',
@@ -137,6 +141,8 @@ export interface Settings {
   restoreSession: boolean
   /** Look for new versions on GitHub in the background (a manual check is always available). */
   autoUpdate: boolean
+  /** Hide the address bar (with the bookmarks and tool buttons); it slides in when the cursor reaches the edge. */
+  autoHideAddressBar: boolean
 }
 
 export interface AlertDialogPayload {
@@ -257,4 +263,10 @@ export interface AnchorBounds {
   y: number
   width: number
   height: number
+}
+
+/** Sent to the address-bar overlay (see main/edgeOverlay.ts): slide in or out, from the top or the bottom edge. */
+export interface EdgeState {
+  open: boolean
+  position: 'top' | 'bottom'
 }

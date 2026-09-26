@@ -20,6 +20,7 @@ import BookmarksBar from './components/BookmarksBar'
 import SettingsPage from './components/SettingsPage'
 import NewTabPage from './components/NewTabPage'
 import HistoryPage from './components/HistoryPage'
+import DownloadsPage from './components/DownloadsPage'
 import AlertModal from './components/AlertModal'
 import CertWarningModal from './components/CertWarningModal'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -36,7 +37,8 @@ const DEFAULT_SETTINGS: Settings = {
   tabLayout: 'top',
   sidebarCollapsed: false,
   restoreSession: true,
-  autoUpdate: true
+  autoUpdate: true,
+  autoHideAddressBar: false
 }
 
 export default function App(): JSX.Element {
@@ -215,6 +217,8 @@ export default function App(): JSX.Element {
   // With a sidebar the top bar stays a single lean row (navigation + address + window controls) and
   // the tool buttons move to the sidebar footer.
   const sidebarLayout = layout === 'left' || layout === 'right'
+  // With the address bar auto-hidden it lives in an overlay (AddressBarOverlay), not in the toolbar.
+  const hideBar = settings.autoHideAddressBar
   const tools = (
     <ToolButtons
       onInspect={inspect}
@@ -268,15 +272,15 @@ export default function App(): JSX.Element {
         >
           {layout === 'top' ? (
             <TabStrip tabs={tabs} onActivate={activateTab} onClose={closeTab} onNewTab={newTab} />
-          ) : sidebarLayout ? (
+          ) : sidebarLayout && !hideBar ? (
             addressBar
           ) : (
             <div className="toolbar-row__brand">Lumo</div>
           )}
           <WindowControls isMaximized={isMaximized} />
         </div>
-        {!sidebarLayout && addressBar}
-        {settings.showBookmarksBar && (
+        {!sidebarLayout && layout !== 'bottom' && !hideBar && addressBar}
+        {settings.showBookmarksBar && !hideBar && (
           <BookmarksBar
             bookmarks={bookmarks}
             onOpen={(url) => navigate(url)}
@@ -324,6 +328,7 @@ export default function App(): JSX.Element {
                 onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
               />
             )}
+            {activeTab?.url === 'lumo://downloads' && <DownloadsPage downloads={downloads} />}
             {activeTab?.url === 'lumo://newtab' && (
               <NewTabPage
                 bookmarks={bookmarks}
@@ -340,6 +345,7 @@ export default function App(): JSX.Element {
       {!toolbarHidden && layout === 'bottom' && (
         <div className="tabbar-bottom">
           <TabStrip tabs={tabs} onActivate={activateTab} onClose={closeTab} onNewTab={newTab} />
+          {!hideBar && addressBar}
         </div>
       )}
 

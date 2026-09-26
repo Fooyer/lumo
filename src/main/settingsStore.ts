@@ -15,7 +15,8 @@ const DEFAULTS: Settings = {
   tabLayout: 'top',
   sidebarCollapsed: false,
   restoreSession: true,
-  autoUpdate: true
+  autoUpdate: true,
+  autoHideAddressBar: false
 }
 
 export class SettingsStore {

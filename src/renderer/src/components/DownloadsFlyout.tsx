@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, Folder, ExternalLink, X, Trash2 } from 'lucide-react'
 import type { DownloadItem } from '@shared/ipc'
 import { lighten } from '../lib/color'
+import { downloadEta } from '../lib/downloadEta'
 
 const PAGE_SIZE = 25
 
@@ -155,6 +156,7 @@ export default function DownloadsFlyout(): JSX.Element {
                               <span>
                                 {formatBytes(d.receivedBytes)} / {formatBytes(d.totalBytes)} ({pct}%)
                               </span>
+                              {downloadEta(d) && <span>· {downloadEta(d)}</span>}
                             </>
                           )}
                           {d.state === 'completed' && (
@@ -228,6 +230,13 @@ export default function DownloadsFlyout(): JSX.Element {
               )}
             </div>
           )}
+        </div>
+
+        <div className="settings-flyout-footer">
+          <button className="settings-flyout-advanced-btn" onClick={() => window.lumo.openDownloadsPage()}>
+            <ExternalLink size={14} strokeWidth={2.2} />
+            <span>Ver todos os downloads (Ctrl+J)</span>
+          </button>
         </div>
       </div>
     </div>

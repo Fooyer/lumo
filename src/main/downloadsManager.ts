@@ -1,9 +1,20 @@
 import fs from 'fs'
+import { extname, basename, join } from 'path'
 import { randomUUID } from 'crypto'
-import { session, shell, type DownloadItem as ElectronDownloadItem } from 'electron'
+import { app, BrowserWindow, dialog, session, shell, type DownloadItem as ElectronDownloadItem } from 'electron'
 import type { DownloadItem } from '../shared/ipc'
 
 const HISTORY_LIMIT = 200
+
+/** <dir>/<name>, or "<name> (1).ext", "(2)"… when a file with that name is already there. */
+function uniquePath(dir: string, filename: string): string {
+  const safe = basename(filename) || 'download'
+  const ext = extname(safe)
+  const stem = safe.slice(0, safe.length - ext.length)
+  let candidate = join(dir, safe)
+  for (let n = 1; fs.existsSync(candidate); n++) candidate = join(dir, `${stem} (${n})${ext}`)
+  return candidate
+}
 
 export class DownloadsManager {
   private items: DownloadItem[]
@@ -47,6 +58,19 @@ export class DownloadsManager {
   }
 
   private trackDownload(item: ElectronDownloadItem, webContents: Electron.WebContents): void {
+    // Ask where to save ("Save as"). Electron's own dialog is left out on purpose: with page views it may
+    // not find a parent window and the download then waits on a dialog nobody sees. Asking here, parented
+    // to the window, is reliable. The Downloads folder is the suggested place.
+    const parent = BrowserWindow.fromWebContents(webContents) ?? BrowserWindow.getAllWindows()[0]
+    const suggested = uniquePath(app.getPath('downloads'), item.getFilename())
+    const chosen = parent
+      ? dialog.showSaveDialogSync(parent, { defaultPath: suggested })
+      : dialog.showSaveDialogSync({ defaultPath: suggested })
+    if (!chosen) {
+      item.cancel()
+      return
+    }
+    item.setSavePath(chosen)
     const id = randomUUID()
     const entry: DownloadItem = {
       id,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell, clipboard, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell, clipboard, Menu, screen } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -12,8 +12,8 @@ import { externalUrlsFromArgv, getDefaultBrowserStatus, makeDefaultBrowser } fro
 import { BookmarksManager } from './bookmarksManager'
 import { HistoryManager } from './historyManager'
 import { DownloadsManager } from './downloadsManager'
-import { DownloadsFlyout } from './downloadsFlyout'
-import { SettingsFlyout } from './settingsFlyout'
+import { OverlayPanel } from './overlayPanel'
+import { EdgeOverlay } from './edgeOverlay'
 import { SuggestionsFlyout } from './suggestionsFlyout'
 import { Updater } from './updater'
 
@@ -23,6 +23,12 @@ const historyManager = new HistoryManager(join(app.getPath('userData'), 'lumo-hi
 const updater = new Updater(() => settingsStore.get().autoUpdate)
 const sessionStore = new SessionStore(join(app.getPath('userData'), 'lumo-session.json'))
 const SESSION_SAVE_DEBOUNCE_MS = 800
+// How the auto-hiding address bar is triggered: the cursor position is polled.
+const ADDRESS_BAR_DEFAULT_PX = 56
+// How far above the tab strip the cursor still counts as "at the bottom edge".
+const BOTTOM_EDGE_SLOP_PX = 2
+const EDGE_POLL_MS = 60
+const EDGE_COLLAPSE_TICKS = 5
 // Constructed once the app is ready (below) — it reads session.defaultSession, which isn't available before then.
 let downloadsManager: DownloadsManager
 
@@ -115,12 +121,63 @@ function createWindow(): void {
     () => settingsStore.get(),
     (wc) => downloadsManager.isDownloadingFrom(wc)
   )
-  const downloadsFlyout = new DownloadsFlyout(mainWindow)
-  const settingsFlyout = new SettingsFlyout(mainWindow)
+  // Panels that open from toolbar buttons: views stacked above the page, not separate windows.
+  const downloadsFlyout = new OverlayPanel(mainWindow, {
+    hash: 'downloads-flyout',
+    width: 380,
+    height: 460,
+    channels: { show: IPC.downloadsFlyoutShow, close: IPC.downloadsFlyoutClose, changed: IPC.downloadsFlyoutChanged }
+  })
+  const settingsFlyout = new OverlayPanel(mainWindow, {
+    hash: 'settings-flyout',
+    width: 340,
+    height: 560,
+    channels: { show: IPC.settingsFlyoutShow, close: IPC.settingsFlyoutClose, changed: IPC.settingsFlyoutChanged }
+  })
   const suggestionsFlyout = new SuggestionsFlyout(mainWindow)
 
+  // Auto-hide address bar: it slides in over the page from the top (under the tabs) or, in the bottom
+  // layout, from the bottom (above the tabs) — a view above the page, so the page is never resized.
+  let addressBarHeight = ADDRESS_BAR_DEFAULT_PX
+  const addressBar = new EdgeOverlay(mainWindow, 'address-bar', () => {
+    const [width, winH] = mainWindow.getContentSize()
+    const height = Math.min(addressBarHeight, winH)
+    const y =
+      settingsStore.get().tabLayout === 'bottom'
+        ? (tabManager.contentBottom() ?? winH) - height
+        : (tabManager.contentTop() ?? 0)
+    return { x: 0, y, width, height }
+  })
+  const bars = [addressBar]
+  // Everything the bars render comes from the same broadcasts as the main window.
+  const chromeSend = (channel: string, payload?: unknown): void => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
+    for (const bar of bars) if (!bar.webContents.isDestroyed()) bar.webContents.send(channel, payload)
+  }
+  // A view attached after an overlay opened would cover it: put the bars, then the panels, back on top.
+  tabManager.setOnViewsChanged(() => {
+    for (const bar of bars) {
+      bar.reposition()
+      bar.raise()
+    }
+    downloadsFlyout.raise()
+    settingsFlyout.raise()
+  })
+  // Overlay views report anchors in their own coordinates; the panels and the suggestions want the window's.
+  const originOf = (sender: Electron.WebContents): { x: number; y: number } => {
+    const bar = bars.find((b) => b.webContents === sender)
+    return bar ? { x: bar.bounds.x, y: bar.bounds.y } : { x: 0, y: 0 }
+  }
+  const shiftAnchor = (sender: Electron.WebContents, a?: AnchorBounds): AnchorBounds | undefined => {
+    if (!a) return a
+    const o = originOf(sender)
+    return { ...a, x: a.x + o.x, y: a.y + o.y }
+  }
+  // The suggestions reply goes to whichever UI asked for them (main window or the bottom bar).
+  let suggestionsTarget: Electron.WebContents = mainWindow.webContents
+
   const sendTabs = (): void => {
-    mainWindow.webContents.send(IPC.tabsUpdated, tabManager.snapshot())
+    chromeSend(IPC.tabsUpdated, tabManager.snapshot())
   }
 
   // The open tabs are saved continuously (debounced), not only on exit, so a crash or a killed
@@ -145,7 +202,7 @@ function createWindow(): void {
     sessionClosed = true
   })
   tabManager.setOnAiBusy((busy, message) => {
-    mainWindow.webContents.send(IPC.aiStatus, { busy, message })
+    chromeSend(IPC.aiStatus, { busy, message })
   })
   memoryManager.setOnUpdate((snapshot) => {
     mainWindow.webContents.send(IPC.memoryUpdated, snapshot)
@@ -163,7 +220,10 @@ function createWindow(): void {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.historyChanged)
   })
   downloadsManager.setOnUpdate(() => {
-    mainWindow.webContents.send(IPC.downloadsUpdated, downloadsManager.list())
+    const list = downloadsManager.list()
+    chromeSend(IPC.downloadsUpdated, list)
+    // The panel is its own web contents, so it has to be told too (it's what shows live progress).
+    downloadsFlyout.send(IPC.downloadsUpdated, list)
   })
 
   ipcMain.handle(IPC.tabsCreate, (_e, url?: string, activate = true) =>
@@ -192,7 +252,7 @@ function createWindow(): void {
     const next = settingsStore.set(partial)
     mainWindow.setBackgroundColor(next.theme.bg)
     // The main window and the quick-settings flyout are separate renderers; keep both in sync.
-    mainWindow.webContents.send(IPC.settingsChanged, next)
+    chromeSend(IPC.settingsChanged, next)
     settingsFlyout.send(IPC.settingsChanged, next)
     return next
   })
@@ -210,21 +270,21 @@ function createWindow(): void {
   ipcMain.handle(IPC.bookmarksList, () => bookmarksManager.list())
   ipcMain.handle(IPC.bookmarksAdd, (_e, input: { title: string; url: string; favicon: string | null }) => {
     const bookmark = bookmarksManager.add(input)
-    mainWindow.webContents.send(IPC.bookmarksUpdated, bookmarksManager.list())
+    chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
     return bookmark
   })
   ipcMain.handle(IPC.bookmarksRemove, (_e, id: string) => {
     bookmarksManager.remove(id)
-    mainWindow.webContents.send(IPC.bookmarksUpdated, bookmarksManager.list())
+    chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
   })
   ipcMain.on(IPC.bookmarksReorder, (_e, draggedId: string, beforeId: string | null) => {
     bookmarksManager.reorder(draggedId, beforeId)
-    mainWindow.webContents.send(IPC.bookmarksUpdated, bookmarksManager.list())
+    chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
   })
   ipcMain.on(IPC.bookmarksContextMenu, (_e, id: string) => {
     const bookmark = bookmarksManager.list().find((b) => b.id === id)
     if (!bookmark) return
-    const sendUpdated = (): void => mainWindow.webContents.send(IPC.bookmarksUpdated, bookmarksManager.list())
+    const sendUpdated = (): void => chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
     Menu.buildFromTemplate([
       {
         label: 'Abrir',
@@ -272,9 +332,10 @@ function createWindow(): void {
   ipcMain.handle(IPC.historySuggest, (_e, query: unknown) =>
     typeof query === 'string' ? historyManager.suggest(query, bookmarksManager.list(), 6) : []
   )
-  ipcMain.on(IPC.suggestionsFlyoutShow, (_e, payload: SuggestionsFlyoutShow) =>
-    suggestionsFlyout.show(payload)
-  )
+  ipcMain.on(IPC.suggestionsFlyoutShow, (e, payload: SuggestionsFlyoutShow) => {
+    suggestionsTarget = e.sender
+    suggestionsFlyout.show({ ...payload, anchor: shiftAnchor(e.sender, payload.anchor) ?? payload.anchor })
+  })
   ipcMain.on(IPC.suggestionsFlyoutHide, () => suggestionsFlyout.hide())
   // The flyout is a separate window; its clicks and hovers are relayed back to the UI that owns the input.
   ipcMain.on(IPC.suggestionsFlyoutPick, (_e, owner: string, url: string, newTab: boolean) => {
@@ -284,10 +345,10 @@ function createWindow(): void {
       return
     }
     suggestionsFlyout.hide()
-    mainWindow.webContents.send(IPC.suggestionPicked, { owner, url })
+    suggestionsTarget.send(IPC.suggestionPicked, { owner, url })
   })
   ipcMain.on(IPC.suggestionsFlyoutHover, (_e, owner: string, index: number) =>
-    mainWindow.webContents.send(IPC.suggestionHovered, { owner, index })
+    suggestionsTarget.send(IPC.suggestionHovered, { owner, index })
   )
 
   updater.setOnStatus((status) => {
@@ -302,12 +363,16 @@ function createWindow(): void {
   ipcMain.on(IPC.downloadsShowInFolder, (_e, id: string) => downloadsManager.showInFolder(id))
   ipcMain.on(IPC.downloadsCancel, (_e, id: string) => downloadsManager.cancel(id))
   ipcMain.on(IPC.downloadsClearFinished, () => downloadsManager.clearFinished())
-  ipcMain.on(IPC.downloadsFlyoutToggle, (_e, anchorBounds?: AnchorBounds) =>
-    downloadsFlyout.toggle(anchorBounds)
+  ipcMain.on(IPC.downloadsOpenPage, () => {
+    downloadsFlyout.closeImmediate()
+    tabManager.openInternal('lumo://downloads')
+  })
+  ipcMain.on(IPC.downloadsFlyoutToggle, (e, anchorBounds?: AnchorBounds) =>
+    downloadsFlyout.toggle(shiftAnchor(e.sender, anchorBounds))
   )
   ipcMain.on(IPC.downloadsFlyoutClose, () => downloadsFlyout.close())
-  ipcMain.on(IPC.settingsFlyoutToggle, (_e, anchorBounds?: AnchorBounds) =>
-    settingsFlyout.toggle(anchorBounds)
+  ipcMain.on(IPC.settingsFlyoutToggle, (e, anchorBounds?: AnchorBounds) =>
+    settingsFlyout.toggle(shiftAnchor(e.sender, anchorBounds))
   )
   ipcMain.on(IPC.settingsFlyoutClose, () => settingsFlyout.close())
   ipcMain.on(IPC.settingsOpenFull, () => {
@@ -344,8 +409,8 @@ function createWindow(): void {
     else mainWindow.maximize()
   })
   ipcMain.on(IPC.windowClose, () => mainWindow.close())
-  mainWindow.on('maximize', () => mainWindow.webContents.send(IPC.windowMaximizedChanged, true))
-  mainWindow.on('unmaximize', () => mainWindow.webContents.send(IPC.windowMaximizedChanged, false))
+  mainWindow.on('maximize', () => chromeSend(IPC.windowMaximizedChanged, true))
+  mainWindow.on('unmaximize', () => chromeSend(IPC.windowMaximizedChanged, false))
 
   mainWindow.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && tabManager.handleShortcut(input)) e.preventDefault()
@@ -380,7 +445,59 @@ function createWindow(): void {
   })
 
   mainWindowRef = mainWindow
+  // The bar is shown by cursor position, not DOM hover (the toolbar is an app drag region, which swallows
+  // mouse events). Top: it opens with the cursor over the toolbar (tabs/title) and stays while over the bar.
+  // Bottom layout: it opens with the cursor on the tab strip and stays while over the bar. Either way it also
+  // stays while its input has focus (the user is typing).
+  let addressBarFocused = false
+  let outsideTicks = 0
+  let shownAt: 'top' | 'bottom' | null = null
+  const edgeTimer = setInterval(() => {
+    if (mainWindow.isDestroyed()) return
+    const settings = settingsStore.get()
+    const position = settings.tabLayout === 'bottom' ? 'bottom' : 'top'
+    if (!settings.autoHideAddressBar || !mainWindow.isVisible() || mainWindow.isMinimized()) {
+      addressBar.hideImmediate(position)
+      return
+    }
+    // The layout changed while the bar was up: drop it instead of animating it across the window.
+    if (shownAt && shownAt !== position) addressBar.hideImmediate(shownAt)
+    shownAt = position
+
+    const cursor = screen.getCursorScreenPoint()
+    const content = mainWindow.getContentBounds()
+    const cx = cursor.x - content.x
+    const cy = cursor.y - content.y
+    const insideX = cx >= 0 && cx < content.width
+
+    let over: boolean
+    if (position === 'bottom') {
+      const edge = tabManager.contentBottom() ?? content.height
+      const reach = addressBar.isOpen ? edge - addressBarHeight : edge - BOTTOM_EDGE_SLOP_PX
+      over = insideX && cy >= reach && cy <= content.height
+    } else {
+      const edge = tabManager.contentTop() ?? 0
+      const reach = addressBar.isOpen ? edge + addressBarHeight : edge
+      over = insideX && cy >= 0 && cy < reach
+    }
+    if (over) {
+      outsideTicks = 0
+      addressBar.show(position)
+    } else if (addressBar.isOpen && !addressBarFocused && ++outsideTicks >= EDGE_COLLAPSE_TICKS) {
+      addressBar.hide(position)
+    }
+  }, EDGE_POLL_MS)
+  ipcMain.on(IPC.addressBarFocus, (_e, focused: boolean) => {
+    addressBarFocused = focused === true
+  })
+  ipcMain.on(IPC.addressBarHeight, (_e, height: number) => {
+    if (!Number.isFinite(height) || height < 20 || height > 400) return
+    addressBarHeight = Math.round(height)
+    addressBar.reposition()
+  })
+
   mainWindow.on('closed', () => {
+    clearInterval(edgeTimer)
     memoryManager.stop()
     if (mainWindowRef === mainWindow) {
       mainWindowRef = null

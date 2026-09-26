@@ -16,6 +16,7 @@ import type { SavedSession } from './sessionStore'
 
 const DEFAULT_NEW_TAB_URL = 'lumo://newtab'
 const HISTORY_URL = 'lumo://history'
+const DOWNLOADS_URL = 'lumo://downloads'
 const FREEZE_JPEG_QUALITY = 80
 const CLOSED_STACK_LIMIT = 20
 const SPLIT_GAP = 3
@@ -67,6 +68,7 @@ export class TabManager {
   private aiBusyListener: (busy: boolean, message: string | null) => void = () => {}
   private fullscreenListener: (hidden: boolean) => void = () => {}
   private history: HistoryManager | null = null
+  private onViewsChanged: () => void = () => {}
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -82,6 +84,11 @@ export class TabManager {
 
   setOnFullscreenChange(cb: (hidden: boolean) => void): void {
     this.fullscreenListener = cb
+  }
+
+  /** Called after page views were (re)attached, so overlays that must stay on top can re-raise themselves. */
+  setOnViewsChanged(cb: () => void): void {
+    this.onViewsChanged = cb
   }
 
   setHistory(history: HistoryManager): void {
@@ -155,6 +162,16 @@ export class TabManager {
   setContentBounds(rect: Rectangle): void {
     this.contentRect = rect
     this.reflowVisible()
+  }
+
+  /** Top edge of the page area (the bottom of the toolbar), in window client coordinates. */
+  contentTop(): number | null {
+    return this.contentRect ? this.contentRect.y : null
+  }
+
+  /** Bottom edge of the page area, in window client coordinates (null until the UI has reported it). */
+  contentBottom(): number | null {
+    return this.contentRect ? this.contentRect.y + this.contentRect.height : null
   }
 
   private contentBounds(): Rectangle {
@@ -344,6 +361,10 @@ export class TabManager {
       return true
     }
     if (!ctrl) return false
+    if (!input.shift && key === 'j') {
+      this.openInternal(DOWNLOADS_URL)
+      return true
+    }
     if (!input.shift && key === 'h') {
       this.openInternal(HISTORY_URL)
       return true
@@ -561,6 +582,7 @@ export class TabManager {
       if (!this.win.contentView.children.includes(t.view)) this.win.contentView.addChildView(t.view)
       t.view.setBounds(rects[i])
     })
+    this.onViewsChanged()
   }
 
   /** Temporarily detaches the visible page view(s) so a blocking in-app dialog (e.g. a page's
@@ -936,6 +958,7 @@ function stripFragment(url: string): string {
 function internalTitle(url: string): string {
   if (url === 'lumo://settings') return 'Configurações'
   if (url === HISTORY_URL) return 'Histórico'
+  if (url === DOWNLOADS_URL) return 'Downloads'
   return 'Nova aba'
 }
 
