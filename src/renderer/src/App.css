@@ -3030,3 +3030,89 @@ body.flyout-window #root {
   filter: drop-shadow(0 0 2px color-mix(in srgb, var(--bg) 90%, transparent))
     drop-shadow(0 3px 14px color-mix(in srgb, var(--bg) 75%, transparent));
 }
+
+/* Private tabs: the whole window turns violet while one is active, so it's never unclear which mode you're in. */
+.app--private {
+  --accent: #8b5cf6;
+  --accent-strong: #6d3fe0;
+  --accent-soft: rgba(139, 92, 246, 0.18);
+  --on-accent: #fff;
+  --on-gradient: #fff;
+  --gradient: linear-gradient(135deg, #8b5cf6 0%, #c026d3 100%);
+}
+
+.tab--incognito {
+  box-shadow: inset 0 -2px 0 #8b5cf6;
+}
+
+.tab__private-icon {
+  flex: none;
+  color: #a78bfa;
+}
+
+.nav-btn--private:hover {
+  color: #a78bfa;
+}
+
+.new-tab__private-head {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: #a78bfa;
+}
+
+.new-tab--incognito .new-tab__logo {
+  font-size: 30px;
+  margin-bottom: 20px;
+}
+
+.private-info {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  width: min(720px, 100%);
+  margin-top: 28px;
+  text-align: left;
+}
+
+.private-info__col {
+  padding: 14px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.private-info__col h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.private-info__col ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+.private-info__col li + li {
+  margin-top: 4px;
+}
+
+@media (max-width: 720px) {
+  .private-info {
+    grid-template-columns: 1fr;
+  }
+}

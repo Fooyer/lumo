@@ -9,6 +9,7 @@ import {
 } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
+import { PRIVATE_PARTITION } from './privateSession'
 import type { TabSnapshot, CertWarningPayload, SoundEvent } from '../shared/ipc'
 import { resolveNavigationIntent, suggestTabGroups } from './opencode'
 import type { HistoryManager } from './historyManager'
@@ -41,6 +42,8 @@ export interface Tab {
   aiGroup: { label: string; color: string } | null
   splitGroupId: string | null
   isFullscreen: boolean
+  /** Private tab: runs in the in-memory session and leaves no history, session or closed-tab trace. */
+  incognito: boolean
 }
 
 interface PendingCertWarning {
@@ -72,6 +75,7 @@ export class TabManager {
   private onSound: (event: SoundEvent) => void = () => {}
   private onAudible: (audible: boolean) => void = () => {}
   private audible = false
+  private onPrivateClosed: () => void = () => {}
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -92,6 +96,11 @@ export class TabManager {
   /** Called after page views were (re)attached, so overlays that must stay on top can re-raise themselves. */
   setOnSound(cb: (event: SoundEvent) => void): void {
     this.onSound = cb
+  }
+
+  /** Called when the last private tab has closed, so what the private session stored can be wiped. */
+  setOnPrivateClosed(cb: () => void): void {
+    this.onPrivateClosed = cb
   }
 
   /** Called when any tab starts or stops making sound (used to lower the background music). */
@@ -230,6 +239,8 @@ export class TabManager {
   createView(tab: Tab, url: string): void {
     const view = new WebContentsView({
       webPreferences: {
+        // A partition without "persist:" is kept in memory only (see privateSession.ts).
+        ...(tab.incognito ? { partition: PRIVATE_PARTITION } : {}),
         contextIsolation: true,
         sandbox: true,
         preload: TAB_PRELOAD_PATH,
@@ -261,22 +272,26 @@ export class TabManager {
     })
     wc.on('page-title-updated', (_e, title) => {
       tab.title = title
-      this.history?.updatePage(wc.getURL(), { title })
+      if (!tab.incognito) this.history?.updatePage(wc.getURL(), { title })
       this.onChange()
     })
     wc.on('page-favicon-updated', (_e, favicons) => {
-      tab.favicon = favicons[0] ?? null
-      this.history?.updatePage(wc.getURL(), { favicon: tab.favicon })
+      // The tab strip loads icons through the main window's normal session, which would send that session's
+      // cookies for the site along: a private tab shows no icon rather than link the visit to them.
+      tab.favicon = tab.incognito ? null : favicons[0] ?? null
+      if (!tab.incognito) this.history?.updatePage(wc.getURL(), { favicon: tab.favicon })
       this.onChange()
     })
     wc.on('did-navigate', (_e, navUrl) => {
       tab.url = navUrl
-      this.history?.recordVisit(navUrl)
+      if (!tab.incognito) this.history?.recordVisit(navUrl)
       this.onChange()
     })
     wc.on('did-navigate-in-page', (_e, navUrl, isMainFrame) => {
       // SPA route changes are real visits; a bare #anchor jump on the same page is not.
-      if (isMainFrame && stripFragment(navUrl) !== stripFragment(tab.url)) this.history?.recordVisit(navUrl)
+      if (!tab.incognito && isMainFrame && stripFragment(navUrl) !== stripFragment(tab.url)) {
+        this.history?.recordVisit(navUrl)
+      }
       tab.url = navUrl
       this.onChange()
     })
@@ -321,6 +336,7 @@ export class TabManager {
             autoHideMenuBar: true,
             backgroundColor: '#14151d',
             webPreferences: {
+              ...(tab.incognito ? { partition: PRIVATE_PARTITION } : {}),
               contextIsolation: true,
               sandbox: true,
               preload: TAB_PRELOAD_PATH,
@@ -334,7 +350,7 @@ export class TabManager {
       // webContents is still mid-dispatch of its own window-open event — can tear down its view
       // (e.g. if it's the currently active tab being swapped out) out from under that dispatch.
       const activate = details.disposition !== 'background-tab'
-      setImmediate(() => this.create(details.url, { activate }))
+      setImmediate(() => this.create(details.url, { activate, incognito: tab.incognito }))
       return { action: 'deny' }
     })
     wc.on('did-create-window', (childWindow) => wireChildWindow(childWindow))
@@ -392,6 +408,10 @@ export class TabManager {
       this.openInternal(HISTORY_URL)
       return true
     }
+    if (input.shift && key === 'n') {
+      this.create(undefined, { incognito: true })
+      return true
+    }
     if (input.shift && key === 't') {
       this.reopenLastClosed()
       return true
@@ -411,8 +431,15 @@ export class TabManager {
   private showPageContextMenu(wc: Electron.WebContents, params: Electron.ContextMenuParams): void {
     const items: MenuItemConstructorOptions[] = []
 
+    const fromPrivate = this.tabs.some((t) => t.incognito && t.view?.webContents === wc)
     if (params.linkURL) {
-      items.push({ label: 'Abrir link em nova aba', click: () => this.create(params.linkURL, { activate: false }) })
+      items.push({
+        label: 'Abrir link em nova aba',
+        click: () => this.create(params.linkURL, { activate: false, incognito: fromPrivate })
+      })
+      if (!fromPrivate) {
+        items.push({ label: 'Abrir link em aba anônima', click: () => this.create(params.linkURL, { incognito: true }) })
+      }
       items.push({ label: 'Copiar link', click: () => clipboard.writeText(params.linkURL) })
       items.push({ type: 'separator' })
     }
@@ -420,14 +447,14 @@ export class TabManager {
     if (params.hasImageContents) {
       items.push({
         label: 'Abrir imagem em nova aba',
-        click: () => this.create(params.srcURL, { activate: false })
+        click: () => this.create(params.srcURL, { activate: false, incognito: fromPrivate })
       })
       items.push({ label: 'Salvar imagem como…', click: () => wc.downloadURL(params.srcURL) })
       items.push({ label: 'Copiar imagem', click: () => wc.copyImageAt(params.x, params.y) })
       items.push({ type: 'separator' })
     }
 
-    items.push(...buildEditContextItems(params, (query) => this.create(searchUrl(query))))
+    items.push(...buildEditContextItems(params, (query) => this.create(searchUrl(query), { incognito: fromPrivate })))
 
     items.push({
       label: 'Voltar',
@@ -488,9 +515,9 @@ export class TabManager {
   /** Creates a tab. With `restored`, an external page is left as a suspended placeholder that only loads once activated. */
   create(
     rawUrl?: string,
-    options: { activate?: boolean; restored?: { title: string; favicon: string | null } } = {}
+    options: { activate?: boolean; incognito?: boolean; restored?: { title: string; favicon: string | null } } = {}
   ): string {
-    const { activate = true, restored } = options
+    const { activate = true, restored, incognito = false } = options
     const id = randomUUID()
     const url = normalizeUrlOrNull(rawUrl || '') || DEFAULT_NEW_TAB_URL
     const internal = isInternalUrl(url)
@@ -498,7 +525,7 @@ export class TabManager {
     const tab: Tab = {
       id,
       url,
-      title: internal ? internalTitle(url) : restored?.title || (restored ? domainOf(url) : 'Nova aba'),
+      title: internal ? (incognito && url === DEFAULT_NEW_TAB_URL ? 'Aba anônima' : internalTitle(url)) : restored?.title || (restored ? domainOf(url) : 'Nova aba'),
       favicon: restored?.favicon ?? null,
       loading: !internal && !placeholder,
       suspended: placeholder,
@@ -509,7 +536,8 @@ export class TabManager {
       view: null,
       aiGroup: null,
       splitGroupId: null,
-      isFullscreen: false
+      isFullscreen: false,
+      incognito
     }
     this.tabs.push(tab)
     if (!internal && !placeholder) this.createView(tab, url)
@@ -526,14 +554,16 @@ export class TabManager {
     else this.create(url)
   }
 
+  /** What is saved for the next launch: private tabs are left out entirely. */
   getSessionState(): SavedSession | null {
-    if (this.tabs.length === 0) return null
-    const indexById = new Map(this.tabs.map((t, i) => [t.id, i]))
+    const saved = this.tabs.filter((t) => !t.incognito)
+    if (saved.length === 0) return null
+    const indexById = new Map(saved.map((t, i) => [t.id, i]))
     const groups = [...this.groups.values()].map((ids) =>
       ids.map((id) => indexById.get(id)).filter((i): i is number => i !== undefined)
     )
     return {
-      tabs: this.tabs.map((t) => ({ url: t.url, title: t.title, favicon: t.favicon })),
+      tabs: saved.map((t) => ({ url: t.url, title: t.title, favicon: t.favicon })),
       activeIndex: indexById.get(this.activeId ?? '') ?? 0,
       groups
     }
@@ -559,7 +589,7 @@ export class TabManager {
 
   duplicate(id: string): void {
     const tab = this.get(id)
-    if (tab) this.create(tab.url)
+    if (tab) this.create(tab.url, { incognito: tab.incognito })
   }
 
   activate(id: string): void {
@@ -636,10 +666,12 @@ export class TabManager {
       this.win.contentView.removeChildView(tab.view)
       tab.view.webContents.close()
     }
-    if (!isInternalUrl(tab.url)) {
+    if (!isInternalUrl(tab.url) && !tab.incognito) {
       this.closedStack.push({ url: tab.url })
       if (this.closedStack.length > CLOSED_STACK_LIMIT) this.closedStack.shift()
     }
+
+    if (tab.incognito && !this.tabs.some((t) => t.incognito)) this.onPrivateClosed()
 
     if (this.activeId === id) {
       this.activeId = null
@@ -843,6 +875,12 @@ export class TabManager {
       return { kind: 'navigate', detail: direct }
     }
 
+    // The AI interpretation sends what was typed to an outside program; a private tab never does that.
+    if (tab.incognito) {
+      this.loadInTab(tab, searchUrl(input))
+      return { kind: 'search', detail: input }
+    }
+
     this.aiBusyListener(true, 'Pensando na sua busca…')
     try {
       const intent = await resolveNavigationIntent(input)
@@ -888,7 +926,7 @@ export class TabManager {
     this.aiBusyListener(true, 'Organizando suas abas…')
     try {
       const groups = await suggestTabGroups(
-        this.tabs.map((t) => ({ id: t.id, title: t.title, url: t.url }))
+        this.tabs.filter((t) => !t.incognito).map((t) => ({ id: t.id, title: t.title, url: t.url }))
       )
       for (const tab of this.tabs) tab.aiGroup = null
       for (const group of groups) {
@@ -924,6 +962,7 @@ export class TabManager {
         groupLabel: group.label,
         groupColor: group.color,
         splitGroupId: t.splitGroupId,
+        incognito: t.incognito,
         memoryMB: t.memoryMB,
         lastActiveAt: t.lastActiveAt,
         canGoBack: navigationState(t.view).canGoBack,

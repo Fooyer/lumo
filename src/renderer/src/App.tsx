@@ -286,6 +286,7 @@ export default function App(): JSX.Element {
   const hideBar = settings.autoHideAddressBar
   const tools = (
     <ToolButtons
+      onNewPrivateTab={() => void window.lumo.createPrivateTab()}
       onInspect={inspect}
       downloads={downloads}
       downloadsOpen={downloadsOpen}
@@ -325,7 +326,7 @@ export default function App(): JSX.Element {
   ) : null
 
   return (
-    <div className={`app app--${layout}`}>
+    <div className={`app app--${layout} ${activeTab?.incognito ? 'app--private' : ''}`}>
       <div className={`toolbar ${toolbarHidden ? 'toolbar--collapsed' : ''}`}>
         <ErrorBoundary>
         <div
@@ -415,7 +416,8 @@ export default function App(): JSX.Element {
               <NewTabPage
                 bookmarks={bookmarks}
                 totalMemoryMB={memory?.totalMB ?? null}
-                wallpaper={wallpaper}
+                incognito={!!activeTab.incognito}
+                wallpaper={activeTab.incognito ? null : wallpaper}
                 onNavigate={navigate}
                 onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
               />

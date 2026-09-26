@@ -27,6 +27,7 @@ import { OverlayPanel } from './overlayPanel'
 import { EdgeOverlay } from './edgeOverlay'
 import { SuggestionsFlyout } from './suggestionsFlyout'
 import { Updater } from './updater'
+import { getPrivateSession, wipePrivateSession } from './privateSession'
 import { ModsManager } from './modsManager'
 
 const settingsStore = new SettingsStore(join(app.getPath('userData'), 'lumo-settings.json'))
@@ -110,17 +111,28 @@ app.userAgentFallback = `Mozilla/5.0 (${uaPlatform}) AppleWebKit/537.36 (KHTML, 
 // It's decided at run time, so the same build behaves right on both systems.
 const FIREFOX_LINUX_UA = 'Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0'
 
+/** The Linux-only sign-in tweak for one request: Firefox's user agent and no client hints. */
+function googleSignInQuirk(url: string, headers: Record<string, string>): Record<string, string> {
+  if (process.platform !== 'linux') return headers
+  let host = ''
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return headers
+  }
+  if (host !== 'accounts.google.com') return headers
+  const out: Record<string, string> = { ...headers, 'User-Agent': FIREFOX_LINUX_UA }
+  for (const name of Object.keys(out)) {
+    if (name.toLowerCase().startsWith('sec-ch-ua')) delete out[name]
+  }
+  return out
+}
+
 function presentAsFirefoxToGoogleSignIn(): void {
   if (process.platform !== 'linux') return
   session.defaultSession.webRequest.onBeforeSendHeaders(
     { urls: ['https://accounts.google.com/*'] },
-    (details, callback) => {
-      const headers: Record<string, string> = { ...details.requestHeaders, 'User-Agent': FIREFOX_LINUX_UA }
-      for (const name of Object.keys(headers)) {
-        if (name.toLowerCase().startsWith('sec-ch-ua')) delete headers[name]
-      }
-      callback({ requestHeaders: headers })
-    }
+    (details, callback) => callback({ requestHeaders: googleSignInQuirk(details.url, { ...details.requestHeaders }) })
   )
 }
 
@@ -151,6 +163,12 @@ function createWindow(): void {
 
   const tabManager = new TabManager(mainWindow)
   tabManager.setHistory(historyManager)
+  // Private tabs run in their own in-memory session; their downloads are tracked but never written to disk.
+  downloadsManager.attachSession(getPrivateSession(googleSignInQuirk), true)
+  tabManager.setOnPrivateClosed(() => {
+    void wipePrivateSession()
+    downloadsManager.purgePrivate()
+  })
   const memoryManager = new MemoryManager(
     tabManager,
     () => settingsStore.get(),
@@ -331,6 +349,7 @@ function createWindow(): void {
   ipcMain.handle(IPC.tabsCreate, (_e, url?: string, activate = true) =>
     tabManager.create(url, { activate })
   )
+  ipcMain.handle(IPC.tabsCreatePrivate, () => tabManager.create(undefined, { incognito: true }))
   ipcMain.handle(IPC.tabsClose, (_e, id: string) => tabManager.close(id))
   ipcMain.handle(IPC.tabsActivate, (_e, id: string) => tabManager.activate(id))
   ipcMain.handle(IPC.tabsGoBack, (_e, id: string) => tabManager.goBack(id))

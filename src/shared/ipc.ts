@@ -1,5 +1,6 @@
 export const IPC = {
   tabsCreate: 'tabs:create',
+  tabsCreatePrivate: 'tabs:create-private',
   tabsClose: 'tabs:close',
   tabsActivate: 'tabs:activate',
   tabsGoBack: 'tabs:go-back',
@@ -103,6 +104,8 @@ export interface TabSnapshot {
   groupLabel: string
   groupColor: string
   splitGroupId: string | null
+  /** A private tab: nothing about it is kept (see main/privateSession.ts). */
+  incognito: boolean
   memoryMB: number | null
   lastActiveAt: number
   canGoBack: boolean
@@ -296,6 +299,8 @@ export interface DownloadItem {
   receivedBytes: number
   totalBytes: number
   startTime: number
+  /** Started from a private tab: kept in memory only, and forgotten when the last private tab closes. */
+  incognito?: boolean
 }
 
 export interface AnchorBounds {

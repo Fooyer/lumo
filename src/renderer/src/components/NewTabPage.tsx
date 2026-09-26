@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react'
+import { ShieldCheck, VenetianMask } from 'lucide-react'
 import type { Bookmark, ModWallpaper } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
 import { useSuggestions } from '../lib/useSuggestions'
@@ -7,13 +8,15 @@ interface Props {
   bookmarks: Bookmark[]
   totalMemoryMB: number | null
   wallpaper: ModWallpaper | null
+  /** A private tab: shows what is and isn't kept, and doesn't suggest pages from the history. */
+  incognito: boolean
   onNavigate: (input: string) => void
   onOpenNewTab: (url: string) => void
 }
 
 type DragZone = 'before' | 'after'
 
-export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavigate, onOpenNewTab }: Props): JSX.Element {
+export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, incognito, onNavigate, onOpenNewTab }: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
   const [focused, setFocused] = useState(false)
@@ -23,7 +26,7 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavi
     value,
     setValue,
     inputRef,
-    enabled: focused,
+    enabled: focused && !incognito,
     anchorRef: formRef,
     owner: 'new-tab',
     onPick: onNavigate
@@ -31,7 +34,7 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavi
   const visible = bookmarks.slice(0, 8)
 
   return (
-    <div className={`new-tab ${wallpaper ? 'new-tab--wallpaper' : ''}`}>
+    <div className={`new-tab ${wallpaper ? 'new-tab--wallpaper' : ''} ${incognito ? 'new-tab--incognito' : ''}`}>
       {wallpaper &&
         (wallpaper.video ? (
           <video
@@ -47,7 +50,14 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavi
           <img className="new-tab__wallpaper" src={wallpaper.url} alt="" />
         ))}
       <div className="new-tab__glow" />
-      <div className="new-tab__logo">Lumo</div>
+      {incognito ? (
+        <div className="new-tab__private-head">
+          <VenetianMask size={44} strokeWidth={1.8} aria-hidden="true" />
+          <div className="new-tab__logo">Navegação anônima</div>
+        </div>
+      ) : (
+        <div className="new-tab__logo">Lumo</div>
+      )}
 
       <form
         ref={formRef}
@@ -122,7 +132,31 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavi
         </div>
       )}
 
-      {totalMemoryMB !== null && <div className="new-tab__stat">{totalMemoryMB} MB de RAM em uso agora</div>}
+      {incognito && (
+        <div className="private-info">
+          <div className="private-info__col">
+            <h3>
+              <ShieldCheck size={14} strokeWidth={2.4} aria-hidden="true" /> O Lumo não guarda
+            </h3>
+            <ul>
+              <li>Histórico de navegação e o que você digita na busca</li>
+              <li>Cookies, cache e dados dos sites (apagados ao fechar a última aba anônima)</li>
+              <li>Estas abas ao reabrir o Lumo</li>
+              <li>Cookies de terceiros e o endereço completo da página para anúncios e rastreadores</li>
+            </ul>
+          </div>
+          <div className="private-info__col">
+            <h3>O que continua visível</h3>
+            <ul>
+              <li>Os sites que você visita, seu provedor de internet e a rede (ou a escola/empresa)</li>
+              <li>Arquivos que você baixa continuam na pasta escolhida</li>
+              <li>Quem você é, se entrar numa conta dentro do site</li>
+            </ul>
+          </div>
+        </div>
+      )}
+
+      {!incognito && totalMemoryMB !== null && <div className="new-tab__stat">{totalMemoryMB} MB de RAM em uso agora</div>}
     </div>
   )
 }

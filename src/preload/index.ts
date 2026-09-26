@@ -29,6 +29,7 @@ import {
 const api = {
   createTab: (url?: string, activate = true): Promise<string> =>
     ipcRenderer.invoke(IPC.tabsCreate, url, activate),
+  createPrivateTab: (): Promise<string> => ipcRenderer.invoke(IPC.tabsCreatePrivate),
   closeTab: (id: string): Promise<void> => ipcRenderer.invoke(IPC.tabsClose, id),
   activateTab: (id: string): Promise<void> => ipcRenderer.invoke(IPC.tabsActivate, id),
   goBack: (id: string): Promise<void> => ipcRenderer.invoke(IPC.tabsGoBack, id),

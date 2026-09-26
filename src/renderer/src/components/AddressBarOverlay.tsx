@@ -117,6 +117,7 @@ export default function AddressBarOverlay(): JSX.Element {
           tools={
             sidebarLayout ? undefined : (
             <ToolButtons
+              onNewPrivateTab={() => void window.lumo.createPrivateTab()}
               onInspect={() => activeTab && void window.lumo.toggleDevTools(activeTab.id)}
               downloads={downloads}
               downloadsOpen={false}

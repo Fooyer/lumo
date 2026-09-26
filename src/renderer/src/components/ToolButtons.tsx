@@ -1,10 +1,11 @@
 import { useRef } from 'react'
-import { Code2, Settings as SettingsIcon } from 'lucide-react'
+import { Code2, Settings as SettingsIcon, VenetianMask } from 'lucide-react'
 import type { DownloadItem, AnchorBounds } from '@shared/ipc'
 import DownloadsButton from './DownloadsButton'
 
 interface Props {
   onInspect: () => void
+  onNewPrivateTab: () => void
   downloads: DownloadItem[]
   downloadsOpen: boolean
   onToggleDownloads: (bounds?: AnchorBounds) => void
@@ -15,6 +16,7 @@ interface Props {
 /** Dev tools, downloads and settings. Placed in the address bar or the sidebar footer depending on the tab layout. */
 export default function ToolButtons({
   onInspect,
+  onNewPrivateTab,
   downloads,
   downloadsOpen,
   onToggleDownloads,
@@ -30,6 +32,9 @@ export default function ToolButtons({
 
   return (
     <>
+      <button className="nav-btn nav-btn--private" onClick={onNewPrivateTab} title="Nova aba anônima (Ctrl+Shift+N)">
+        <VenetianMask size={17} strokeWidth={2.2} />
+      </button>
       <button className="nav-btn nav-btn--inspect" onClick={onInspect} title="Inspecionar página (F12)">
         <Code2 size={16} strokeWidth={2.2} />
       </button>

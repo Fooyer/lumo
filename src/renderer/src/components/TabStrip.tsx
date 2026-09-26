@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus, VenetianMask, X } from 'lucide-react'
 import type { TabSnapshot } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
 
@@ -96,7 +96,7 @@ export default function TabStrip({
                 <button
                   key={tab.id}
                   draggable
-                  className={`tab ${tab.isActive ? 'tab--active' : ''} ${tab.suspended ? 'tab--suspended' : ''} ${
+                  className={`tab ${tab.isActive ? 'tab--active' : ''} ${tab.suspended ? 'tab--suspended' : ''} ${tab.incognito ? 'tab--incognito' : ''} ${
                     dragOver?.id === tab.id ? `tab--drag-${dragOver.zone}` : ''
                   }`}
                   onClick={() => onActivate(tab.id)}
@@ -154,12 +154,16 @@ export default function TabStrip({
                   }}
                   title={vertical && collapsed ? `${tab.title || tab.domain}\n${tab.url}` : tab.url}
                 >
-                  <FaviconImg
-                    src={tab.favicon}
-                    className="tab__favicon"
-                    fallbackClassName="tab__dot"
-                    fallbackColor={tab.groupColor}
-                  />
+                  {tab.incognito ? (
+                    <VenetianMask className="tab__private-icon" size={15} strokeWidth={2.2} aria-label="Aba anônima" />
+                  ) : (
+                    <FaviconImg
+                      src={tab.favicon}
+                      className="tab__favicon"
+                      fallbackClassName="tab__dot"
+                      fallbackColor={tab.groupColor}
+                    />
+                  )}
                   <span className="tab__title">
                     {tab.loading ? 'Carregando…' : tab.title || tab.domain}
                   </span>

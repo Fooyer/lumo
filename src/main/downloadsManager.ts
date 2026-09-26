@@ -27,7 +27,19 @@ export class DownloadsManager {
     ses: Electron.Session = session.defaultSession
   ) {
     this.items = this.load()
-    ses.on('will-download', (_event, item, webContents) => this.trackDownload(item, webContents))
+    this.attachSession(ses, false)
+  }
+
+  /** Tracks the downloads of a session; a private one's are kept out of the saved list. */
+  attachSession(ses: Electron.Session, isPrivate: boolean): void {
+    ses.on('will-download', (_event, item, webContents) => this.trackDownload(item, webContents, isPrivate))
+  }
+
+  /** Drops the private downloads from the list (the files themselves stay where the user saved them). */
+  purgePrivate(): void {
+    const before = this.items.length
+    this.items = this.items.filter((d) => !d.incognito || d.state === 'progressing')
+    if (this.items.length !== before) this.onUpdate()
   }
 
   /** True while a download started by this page is still in flight (closing the page would abort it). */
@@ -47,7 +59,10 @@ export class DownloadsManager {
 
   private save(): void {
     try {
-      fs.writeFileSync(this.filePath, JSON.stringify(this.items.slice(0, HISTORY_LIMIT), null, 2))
+      fs.writeFileSync(
+        this.filePath,
+        JSON.stringify(this.items.filter((d) => !d.incognito).slice(0, HISTORY_LIMIT), null, 2)
+      )
     } catch {
       // disco indisponível: mantém apenas em memória nesta sessão
     }
@@ -57,7 +72,7 @@ export class DownloadsManager {
     this.onUpdate = cb
   }
 
-  private trackDownload(item: ElectronDownloadItem, webContents: Electron.WebContents): void {
+  private trackDownload(item: ElectronDownloadItem, webContents: Electron.WebContents, isPrivate: boolean): void {
     // Ask where to save ("Save as"). Electron's own dialog is left out on purpose: with page views it may
     // not find a parent window and the download then waits on a dialog nobody sees. Asking here, parented
     // to the window, is reliable. The Downloads folder is the suggested place.
@@ -80,7 +95,8 @@ export class DownloadsManager {
       state: 'progressing',
       receivedBytes: 0,
       totalBytes: item.getTotalBytes(),
-      startTime: Date.now()
+      startTime: Date.now(),
+      ...(isPrivate ? { incognito: true } : {})
     }
     this.items.unshift(entry)
     this.items = this.items.slice(0, HISTORY_LIMIT)
