@@ -17,6 +17,10 @@ export const IPC = {
   fullscreenChanged: 'ui:fullscreen-changed',
   edgeState: 'ui:edge-state',
   addressBarFocus: 'ui:address-bar-focus',
+  shortcutAction: 'ui:shortcut-action',
+  findStart: 'find:start',
+  findStop: 'find:stop',
+  findResult: 'find:result',
   addressBarHeight: 'ui:address-bar-height',
   navigate: 'navigate:smart',
   tabsUpdated: 'tabs:updated',
@@ -43,6 +47,12 @@ export const IPC = {
   bookmarksUpdated: 'bookmarks:updated',
   bookmarksContextMenu: 'bookmarks:context-menu',
   bookmarksReorder: 'bookmarks:reorder',
+  bookmarksMove: 'bookmarks:move',
+  bookmarksFolderCreate: 'bookmarks:folder-create',
+  bookmarksFolderRename: 'bookmarks:folder-rename',
+  bookmarksFolderOpen: 'bookmarks:folder-open',
+  bookmarksAreaMenu: 'bookmarks:area-menu',
+  bookmarksAskName: 'bookmarks:ask-name',
   downloadsList: 'downloads:list',
   downloadsUpdated: 'downloads:updated',
   downloadsOpen: 'downloads:open',
@@ -129,6 +139,15 @@ export interface AiStatusPayload {
   message: string | null
 }
 
+/** Keyboard shortcuts the main process cannot finish alone: the UI focuses a field or drives the find bar. */
+export type ShortcutAction = 'focus-address' | 'find' | 'find-next' | 'find-prev'
+
+export interface FindResult {
+  /** 1-based position of the highlighted match. */
+  active: number
+  matches: number
+}
+
 export interface ThemeSettings {
   accent: string
   danger: string
@@ -178,6 +197,8 @@ export interface Settings {
   autoUpdate: boolean
   /** Hide the address bar (with the bookmarks and tool buttons); it slides in when the cursor reaches the edge. */
   autoHideAddressBar: boolean
+  /** The first-run tour was finished or skipped; turning it off shows the tour again. */
+  onboarded: boolean
   sounds: SoundSettings
   /** Which installed mod each part of the look and sound comes from; null keeps Lumo's own. Parts can come from different mods. */
   mods: ModSelection
@@ -204,9 +225,25 @@ export interface CertWarningPayload {
 export interface Bookmark {
   id: string
   title: string
+  /** Empty for a folder. */
   url: string
   favicon: string | null
   createdAt: number
+  /** Absent (or 'bookmark') for a page; a folder holds bookmarks and lives on the bar. */
+  kind?: 'bookmark' | 'folder'
+  /** The folder this bookmark is in; null (or absent) when it is on the bar. */
+  parentId?: string | null
+}
+
+/** The main window is asked to show the folder name dialog: a new folder (optionally taking a bookmark in) or a rename. */
+export interface FolderPrompt {
+  mode: 'create' | 'rename'
+  /** rename: the folder. */
+  id?: string
+  /** rename: its current name. */
+  name?: string
+  /** create: a bookmark to put in the new folder. */
+  moveId?: string
 }
 
 /** A page the user has visited, aggregated across visits. */

@@ -8,6 +8,9 @@ import {
   type Bookmark,
   type DownloadItem,
   type AlertDialogPayload,
+  type ShortcutAction,
+  type FolderPrompt,
+  type FindResult,
   type CertWarningPayload,
   type DefaultBrowserStatus,
   type HistoryListResult,
@@ -105,8 +108,23 @@ const api = {
   addBookmark: (input: { title: string; url: string; favicon: string | null }): Promise<Bookmark> =>
     ipcRenderer.invoke(IPC.bookmarksAdd, input),
   removeBookmark: (id: string): Promise<void> => ipcRenderer.invoke(IPC.bookmarksRemove, id),
-  reorderBookmark: (draggedId: string, beforeId: string | null): void =>
-    ipcRenderer.send(IPC.bookmarksReorder, draggedId, beforeId),
+  reorderBookmark: (draggedId: string, beforeId: string | null, parentId?: string | null): void =>
+    ipcRenderer.send(IPC.bookmarksReorder, draggedId, beforeId, parentId ?? null),
+  moveBookmark: (id: string, folderId: string | null): void => ipcRenderer.send(IPC.bookmarksMove, id, folderId),
+  createBookmarkFolder: (name: string, moveId?: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.bookmarksFolderCreate, name, moveId),
+  renameBookmarkFolder: (id: string, name: string): Promise<void> =>
+    ipcRenderer.invoke(IPC.bookmarksFolderRename, id, name),
+  openBookmarkFolder: (id: string, anchor: { x: number; y: number; width: number; height: number }): void =>
+    ipcRenderer.send(IPC.bookmarksFolderOpen, id, anchor),
+  showBookmarksAreaMenu: (): void => ipcRenderer.send(IPC.bookmarksAreaMenu),
+  onBookmarkFolderPrompt: (cb: (prompt: FolderPrompt) => void) => {
+    const listener = (_e: unknown, prompt: FolderPrompt): void => cb(prompt)
+    ipcRenderer.on(IPC.bookmarksAskName, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IPC.bookmarksAskName, listener)
+    }
+  },
   showBookmarkContextMenu: (id: string): void => ipcRenderer.send(IPC.bookmarksContextMenu, id),
   onBookmarksUpdated: (cb: (bookmarks: Bookmark[]) => void) => {
     const listener = (_e: unknown, bookmarks: Bookmark[]): void => cb(bookmarks)
@@ -227,6 +245,23 @@ const api = {
     const listener = (_e: unknown, state: EdgeState): void => cb(state)
     ipcRenderer.on(IPC.edgeState, listener)
     return () => ipcRenderer.removeListener(IPC.edgeState, listener)
+  },
+  onShortcutAction: (cb: (action: ShortcutAction) => void) => {
+    const listener = (_e: unknown, action: ShortcutAction): void => cb(action)
+    ipcRenderer.on(IPC.shortcutAction, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IPC.shortcutAction, listener)
+    }
+  },
+  find: (text: string, forward: boolean, findNext: boolean): void =>
+    ipcRenderer.send(IPC.findStart, text, forward, findNext),
+  stopFind: (): void => ipcRenderer.send(IPC.findStop),
+  onFindResult: (cb: (result: FindResult) => void) => {
+    const listener = (_e: unknown, result: FindResult): void => cb(result)
+    ipcRenderer.on(IPC.findResult, listener)
+    return (): void => {
+      ipcRenderer.removeListener(IPC.findResult, listener)
+    }
   },
   setAddressBarFocus: (focused: boolean): void => ipcRenderer.send(IPC.addressBarFocus, focused),
   setAddressBarHeight: (height: number): void => ipcRenderer.send(IPC.addressBarHeight, height),

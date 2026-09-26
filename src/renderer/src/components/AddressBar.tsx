@@ -57,6 +57,14 @@ export default function AddressBar({
   })
 
   useEffect(() => {
+    return window.lumo.onShortcutAction((action) => {
+      if (action !== 'focus-address') return
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    })
+  }, [])
+
+  useEffect(() => {
     if (!editing) setValue(activeTab?.url ?? '')
   }, [activeTab?.url, editing])
 

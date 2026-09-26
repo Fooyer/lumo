@@ -1,24 +1,26 @@
 import { useRef, useState } from 'react'
-import { ShieldCheck, VenetianMask } from 'lucide-react'
+import { ArrowLeft, FolderClosed, FolderPlus, ShieldCheck, VenetianMask } from 'lucide-react'
 import type { Bookmark, ModWallpaper } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
 import { useSuggestions } from '../lib/useSuggestions'
+import { useBookmarkDnd } from '../lib/useBookmarkDnd'
 
 interface Props {
   bookmarks: Bookmark[]
-  totalMemoryMB: number | null
   wallpaper: ModWallpaper | null
   /** A private tab: shows what is and isn't kept, and doesn't suggest pages from the history. */
   incognito: boolean
   onNavigate: (input: string) => void
   onOpenNewTab: (url: string) => void
+  onNewFolder: () => void
 }
 
-type DragZone = 'before' | 'after'
+// The home page shows this many favorites (and folders); the rest are one click away in a folder.
+const HOME_LIMIT = 12
 
-export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, incognito, onNavigate, onOpenNewTab }: Props): JSX.Element {
+export default function NewTabPage({ bookmarks, wallpaper, incognito, onNavigate, onOpenNewTab, onNewFolder }: Props): JSX.Element {
   const [value, setValue] = useState('')
-  const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
+  const [openFolderId, setOpenFolderId] = useState<string | null>(null)
   const [focused, setFocused] = useState(false)
   const formRef = useRef<HTMLFormElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -31,7 +33,13 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, incogn
     owner: 'new-tab',
     onPick: onNavigate
   })
-  const visible = bookmarks.slice(0, 8)
+  // Looking inside a folder replaces the grid with what it holds; a folder removed meanwhile just closes.
+  const openFolder = bookmarks.find((b) => b.id === openFolderId && b.kind === 'folder') ?? null
+  const visible = openFolder
+    ? bookmarks.filter((b) => b.parentId === openFolder.id)
+    : bookmarks.filter((b) => !b.parentId).slice(0, HOME_LIMIT)
+  const dnd = useBookmarkDnd(visible, openFolder?.id ?? null)
+  const countIn = (folderId: string): number => bookmarks.filter((b) => b.parentId === folderId).length
 
   return (
     <div className={`new-tab ${wallpaper ? 'new-tab--wallpaper' : ''} ${incognito ? 'new-tab--incognito' : ''}`}>
@@ -81,54 +89,76 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, incogn
       </form>
 
 
-      {visible.length > 0 && (
-        <div className="new-tab__grid">
-          {visible.map((b) => (
+      {!incognito && openFolder && (
+        <div className="new-tab__folder-head">
+          <button
+            className={`new-tab__back ${dnd.overOut ? 'new-tab__back--drop' : ''}`}
+            title="Voltar aos favoritos (solte aqui para tirar da pasta)"
+            onClick={() => setOpenFolderId(null)}
+            {...dnd.outProps}
+          >
+            <ArrowLeft size={14} strokeWidth={2.4} /> Favoritos
+          </button>
+          <span className="new-tab__folder-name">{openFolder.title}</span>
+        </div>
+      )}
+
+      {(visible.length > 0 || openFolder || (!incognito && bookmarks.length > 0)) && (
+        <div
+          className="new-tab__grid"
+          onContextMenu={(e) => {
+            if (!(e.target as HTMLElement).closest('.new-tab__tile')) window.lumo.showBookmarksAreaMenu()
+          }}
+          {...dnd.rowProps}
+        >
+          {visible.map((b) =>
+            b.kind === 'folder' ? (
+              <button
+                key={b.id}
+                className={`new-tab__tile new-tab__tile--folder ${dnd.dragClass(b.id, 'new-tab__tile')}`}
+                onClick={() => setOpenFolderId(b.id)}
+                onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
+                title={b.title}
+                {...dnd.itemProps(b)}
+              >
+                <FolderClosed size={22} strokeWidth={1.9} className="new-tab__tile-folder" />
+                <span>{b.title}</span>
+                <small>
+                  {countIn(b.id)} {countIn(b.id) === 1 ? 'item' : 'itens'}
+                </small>
+              </button>
+            ) : (
+              <button
+                key={b.id}
+                className={`new-tab__tile ${dnd.dragClass(b.id, 'new-tab__tile')}`}
+                onClick={() => onNavigate(b.url)}
+                onAuxClick={(e) => {
+                  if (e.button === 1) onOpenNewTab(b.url)
+                }}
+                onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
+                title={b.url}
+                {...dnd.itemProps(b)}
+              >
+                <FaviconImg src={b.favicon} className="new-tab__tile-icon" fallbackClassName="new-tab__tile-dot" />
+                <span>{b.title || b.url}</span>
+              </button>
+            )
+          )}
+          {!incognito && !openFolder && visible.length < HOME_LIMIT && (
             <button
-              key={b.id}
-              draggable
-              className={`new-tab__tile ${
-                dragOver?.id === b.id ? `new-tab__tile--drag-${dragOver.zone}` : ''
-              }`}
-              onClick={() => onNavigate(b.url)}
-              onAuxClick={(e) => {
-                if (e.button === 1) onOpenNewTab(b.url)
-              }}
-              onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
-              onDragStart={(e) => {
-                e.dataTransfer.setData('text/plain', b.id)
-                e.dataTransfer.effectAllowed = 'move'
-              }}
-              onDragOver={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                const rect = e.currentTarget.getBoundingClientRect()
-                const ratio = (e.clientX - rect.left) / rect.width
-                setDragOver({ id: b.id, zone: ratio < 0.5 ? 'before' : 'after' })
-              }}
-              onDragLeave={() => setDragOver((d) => (d?.id === b.id ? null : d))}
-              onDrop={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                const draggedId = e.dataTransfer.getData('text/plain')
-                if (draggedId && draggedId !== b.id && dragOver) {
-                  const idx = visible.findIndex((x) => x.id === b.id)
-                  const beforeId = dragOver.zone === 'after' ? visible[idx + 1]?.id ?? null : b.id
-                  window.lumo.reorderBookmark(draggedId, beforeId)
-                }
-                setDragOver(null)
-              }}
-              onDragEnd={() => setDragOver(null)}
-              title={b.url}
+              className="new-tab__tile new-tab__tile--add"
+              title="Criar uma pasta de favoritos"
+              onClick={onNewFolder}
             >
-              <FaviconImg
-                src={b.favicon}
-                className="new-tab__tile-icon"
-                fallbackClassName="new-tab__tile-dot"
-              />
-              <span>{b.title || b.url}</span>
+              <FolderPlus size={20} strokeWidth={1.9} />
+              <span>Nova pasta</span>
             </button>
-          ))}
+          )}
+          {openFolder && visible.length === 0 && (
+            <p className="new-tab__folder-empty">
+              Pasta vazia. Arraste favoritos para cá, ou use o botão direito num favorito › Mover para a pasta.
+            </p>
+          )}
         </div>
       )}
 
@@ -156,7 +186,6 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, incogn
         </div>
       )}
 
-      {!incognito && totalMemoryMB !== null && <div className="new-tab__stat">{totalMemoryMB} MB de RAM em uso agora</div>}
     </div>
   )
 }

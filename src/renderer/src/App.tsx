@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { GX_STORE_MOD_PAGE } from '@shared/ipc'
 import type {
   TabSnapshot,
-  MemorySnapshot,
   AiStatusPayload,
   Settings,
   Bookmark,
   DownloadItem,
   AlertDialogPayload,
+  FolderPrompt,
   CertWarningPayload,
   AnchorBounds,
   UpdateStatus,
@@ -26,6 +27,9 @@ import DownloadsPage from './components/DownloadsPage'
 import AlertModal from './components/AlertModal'
 import CertWarningModal from './components/CertWarningModal'
 import ErrorBoundary from './components/ErrorBoundary'
+import OnboardingTour from './components/OnboardingTour'
+import FindBar from './components/FindBar'
+import FolderNameModal from './components/FolderNameModal'
 import { applyTheme } from './lib/useTheme'
 import { isInteractiveTarget } from './lib/interactive'
 import { useSounds } from './lib/useSounds'
@@ -43,6 +47,8 @@ const DEFAULT_SETTINGS: Settings = {
   restoreSession: true,
   autoUpdate: true,
   autoHideAddressBar: false,
+  // true until the real settings arrive, so the tour doesn't flash for someone who already finished it
+  onboarded: true,
   sounds: {
     enabled: false,
     volume: 60,
@@ -60,7 +66,6 @@ const DEFAULT_SETTINGS: Settings = {
 
 export default function App(): JSX.Element {
   const [tabs, setTabs] = useState<TabSnapshot[]>([])
-  const [memory, setMemory] = useState<MemorySnapshot | null>(null)
   const [aiStatus, setAiStatus] = useState<AiStatusPayload>({ busy: false, message: null })
   const [downloadsOpen, setDownloadsOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -78,15 +83,14 @@ export default function App(): JSX.Element {
     url: null
   })
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
-  const [updateDismissed, setUpdateDismissed] = useState(false)
   const [alertQueue, setAlertQueue] = useState<AlertDialogPayload[]>([])
+  const [folderPrompt, setFolderPrompt] = useState<FolderPrompt | null>(null)
   const [certQueue, setCertQueue] = useState<CertWarningPayload[]>([])
   const slotRef = useRef<HTMLDivElement>(null)
   const lastBoundsRef = useRef('')
 
   useEffect(() => {
     const offTabs = window.lumo.onTabsUpdated(setTabs)
-    const offMemory = window.lumo.onMemoryUpdated(setMemory)
     const offAi = window.lumo.onAiStatus(setAiStatus)
     const offMaximized = window.lumo.onWindowMaximizedChanged(setIsMaximized)
     const offBookmarks = window.lumo.onBookmarksUpdated(setBookmarks)
@@ -94,6 +98,7 @@ export default function App(): JSX.Element {
     const offFullscreen = window.lumo.onFullscreenChanged(setToolbarHidden)
     const offAlert = window.lumo.onAlertDialog((payload) => setAlertQueue((q) => [...q, payload]))
     const offSettings = window.lumo.onSettingsChanged(setSettingsState)
+    const offFolderPrompt = window.lumo.onBookmarkFolderPrompt(setFolderPrompt)
     const offCert =window.lumo.onCertWarning((payload) => setCertQueue((q) => [...q, payload]))
     const offUpdate = window.lumo.onUpdateStatus(setUpdate)
     const offFlyout = window.lumo.onDownloadsFlyoutChanged(setDownloadsOpen)
@@ -104,7 +109,6 @@ export default function App(): JSX.Element {
     void window.lumo.listDownloads().then(setDownloads)
     return () => {
       offTabs()
-      offMemory()
       offAi()
       offMaximized()
       offBookmarks()
@@ -113,6 +117,7 @@ export default function App(): JSX.Element {
       offAlert()
       offCert()
       offSettings()
+      offFolderPrompt()
       offUpdate()
       offFlyout()
       offSettingsFlyout()
@@ -172,8 +177,8 @@ export default function App(): JSX.Element {
   // A page's alert() is a real blocking dialog — hide the native view while it's up so our own
   // styled modal (which native views would otherwise always paint over) is visible and usable.
   useEffect(() => {
-    window.lumo.setModalActive(alertQueue.length + certQueue.length > 0)
-  }, [alertQueue.length, certQueue.length])
+    window.lumo.setModalActive(alertQueue.length + certQueue.length > 0 || !settings.onboarded || folderPrompt !== null)
+  }, [alertQueue.length, certQueue.length, settings.onboarded, folderPrompt])
 
   const answerCertWarning = useCallback((id: string, proceed: boolean) => {
     window.lumo.respondCertWarning(id, proceed)
@@ -343,6 +348,16 @@ export default function App(): JSX.Element {
           ) : (
             <div className="toolbar-row__brand">Lumo</div>
           )}
+          {update?.state === 'ready' && (
+            <button
+              className="update-pill"
+              onClick={() => window.lumo.installUpdate()}
+              title={`O Lumo ${update.version} já foi baixado. Clique para reiniciar e atualizar agora.`}
+            >
+              <RefreshCw size={12} strokeWidth={2.6} />
+              Atualizar{update.version ? ` para ${update.version}` : ''}
+            </button>
+          )}
           <WindowControls isMaximized={isMaximized} />
         </div>
         {!sidebarLayout && layout !== 'bottom' && !hideBar && addressBar}
@@ -353,19 +368,7 @@ export default function App(): JSX.Element {
             onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
           />
         )}
-        {update?.state === 'ready' && !updateDismissed && (
-          <div className="ai-answer update-banner">
-            <span>O Lumo {update.version} foi baixado e está pronto para instalar.</span>
-            <div className="update-banner__actions">
-              <button className="update-banner__install" onClick={() => window.lumo.installUpdate()}>
-                Reiniciar e atualizar
-              </button>
-              <button onClick={() => setUpdateDismissed(true)} title="Depois">
-                ×
-              </button>
-            </div>
-          </div>
-        )}
+        <FindBar tabId={activeTab?.id ?? null} />
         {storeModTab && (
           <div className="ai-answer update-banner">
             <span className={storeInstall.error && storeInstall.url === storeModTab.url ? 'update-banner__error' : undefined}>
@@ -415,11 +418,11 @@ export default function App(): JSX.Element {
             {activeTab?.url === 'lumo://newtab' && (
               <NewTabPage
                 bookmarks={bookmarks}
-                totalMemoryMB={memory?.totalMB ?? null}
                 incognito={!!activeTab.incognito}
                 wallpaper={activeTab.incognito ? null : wallpaper}
                 onNavigate={navigate}
                 onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
+                onNewFolder={() => setFolderPrompt({ mode: 'create' })}
               />
             )}
           </ErrorBoundary>
@@ -433,6 +436,23 @@ export default function App(): JSX.Element {
           {!hideBar && addressBar}
         </div>
       )}
+
+      {folderPrompt && (
+        <FolderNameModal
+          prompt={folderPrompt}
+          onCancel={() => setFolderPrompt(null)}
+          onSubmit={(name) => {
+            if (folderPrompt.mode === 'rename' && folderPrompt.id) {
+              void window.lumo.renameBookmarkFolder(folderPrompt.id, name)
+            } else {
+              void window.lumo.createBookmarkFolder(name, folderPrompt.moveId)
+            }
+            setFolderPrompt(null)
+          }}
+        />
+      )}
+
+      {!settings.onboarded && <OnboardingTour settings={settings} onChange={updateSettings} />}
 
       {certQueue[0] ? (
         <CertWarningModal

@@ -1201,13 +1201,6 @@ body,
   max-width: 100%;
 }
 
-.new-tab__stat {
-  position: relative;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-dim);
-}
-
 @keyframes overlayFadeIn {
   from {
     opacity: 0;
@@ -3115,4 +3108,354 @@ body.flyout-window #root {
   .private-info {
     grid-template-columns: 1fr;
   }
+}
+
+/* Dark/light switch */
+.mode-toggle {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  margin-bottom: 14px;
+}
+
+.mode-toggle__option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 6px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.mode-toggle__option:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.mode-toggle__option--active {
+  background: var(--gradient);
+  color: var(--on-gradient);
+}
+
+.mode-toggle__option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-flyout-group .mode-toggle {
+  margin-bottom: 10px;
+}
+
+/* First-run tour */
+.tour {
+  width: 440px;
+  text-align: left;
+}
+
+.tour__dots {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.tour__dot {
+  width: 22px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--border);
+}
+
+.tour__dot--done,
+.tour__dot--active {
+  background: var(--accent);
+}
+
+.tour__dot--active {
+  background: var(--gradient);
+}
+
+.tour__body {
+  min-height: 250px;
+}
+
+.tour__icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--gradient);
+  color: var(--on-gradient);
+  margin-bottom: 12px;
+}
+
+.tour h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.tour p {
+  margin: 0 0 14px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.tour__actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 10px;
+}
+
+.tour__nav {
+  display: flex;
+  gap: 8px;
+}
+
+.tour__actions .alert-modal__ok,
+.tour__actions .alert-modal__secondary {
+  width: auto;
+  padding: 9px 18px;
+}
+
+.tour__actions .alert-modal__secondary:hover {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+/* "Restart and update" pill: small, in the title row, but in the accent gradient so it's easy to spot */
+.update-pill {
+  -webkit-app-region: no-drag;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: 8px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: 999px;
+  background: var(--gradient);
+  color: var(--on-gradient);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  cursor: pointer;
+  animation: updatePillIn 300ms ease;
+}
+
+.update-pill:hover {
+  filter: brightness(1.1);
+}
+
+@keyframes updatePillIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+
+/* Find in page */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+  padding: 6px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.find-bar__input {
+  width: 260px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  outline: none;
+}
+
+.find-bar__input:focus {
+  border-color: var(--accent);
+}
+
+.find-bar__input--none {
+  border-color: var(--danger);
+}
+
+.find-bar__count {
+  min-width: 90px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  padding: 0 6px;
+}
+
+.find-bar__btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.find-bar__btn:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+/* Bookmark folders */
+.bookmark-chip__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bookmark-chip__folder {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+
+.bookmark-chip__chevron {
+  flex-shrink: 0;
+  opacity: 0.6;
+}
+
+.bookmark-chip--drag-into,
+.new-tab__tile--drag-into {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.new-tab__tile--folder {
+  gap: 6px;
+}
+
+.new-tab__tile-folder {
+  color: var(--accent);
+}
+
+.new-tab__tile small {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-dim);
+}
+
+.new-tab__tile--add {
+  background: transparent;
+  border-style: dashed;
+  color: var(--text-dim);
+  justify-content: center;
+}
+
+.new-tab__tile--add:hover {
+  color: var(--text);
+}
+
+.new-tab__folder-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.new-tab__back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.new-tab__back:hover,
+.new-tab__back--drop {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.new-tab__back--drop {
+  background: var(--accent-soft);
+}
+
+.new-tab__folder-name {
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.new-tab__folder-empty {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-dim);
+  max-width: 440px;
+  line-height: 1.5;
+}
+
+.new-tab--wallpaper .new-tab__back {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.folder-modal {
+  width: 340px;
+}
+
+.folder-modal__input {
+  width: 100%;
+  margin-bottom: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 10px 12px;
+  outline: none;
+  text-align: center;
+}
+
+.folder-modal__input:focus {
+  border-color: var(--accent);
+}
+
+.folder-modal__actions {
+  display: flex;
+  gap: 8px;
+}
+
+.folder-modal__actions .alert-modal__ok:disabled {
+  opacity: 0.5;
+  cursor: default;
 }

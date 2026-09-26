@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { ChevronDown, Folder } from 'lucide-react'
 import type { Bookmark } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
+import { useBookmarkDnd } from '../lib/useBookmarkDnd'
 
 interface Props {
   bookmarks: Bookmark[]
@@ -8,10 +9,10 @@ interface Props {
   onOpenNewTab: (url: string) => void
 }
 
-type DragZone = 'before' | 'after'
-
 export default function BookmarksBar({ bookmarks, onOpen, onOpenNewTab }: Props): JSX.Element {
-  const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
+  // What is inside a folder is reached by opening the folder; the bar shows the top level only.
+  const onBar = bookmarks.filter((b) => !b.parentId)
+  const dnd = useBookmarkDnd(onBar)
 
   return (
     <div
@@ -21,63 +22,54 @@ export default function BookmarksBar({ bookmarks, onOpen, onOpenNewTab }: Props)
           e.currentTarget.scrollLeft += e.deltaY
         }
       }}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => {
-        e.preventDefault()
-        const draggedId = e.dataTransfer.getData('text/plain')
-        if (draggedId) window.lumo.reorderBookmark(draggedId, null)
-        setDragOver(null)
+      onContextMenu={(e) => {
+        if (!(e.target as HTMLElement).closest('.bookmark-chip')) window.lumo.showBookmarksAreaMenu()
       }}
+      {...dnd.rowProps}
     >
-      {bookmarks.length === 0 ? (
+      {onBar.length === 0 ? (
         <span className="bookmarks-bar__hint">
-          Clique na estrela da barra de endereço para adicionar favoritos aqui
+          Clique na estrela da barra de endereço para adicionar favoritos aqui · botão direito para criar uma pasta
         </span>
       ) : (
-        bookmarks.map((b) => (
-          <button
-            key={b.id}
-            draggable
-            className={`bookmark-chip ${dragOver?.id === b.id ? `bookmark-chip--drag-${dragOver.zone}` : ''}`}
-            title={b.url}
-            onClick={() => onOpen(b.url)}
-            onAuxClick={(e) => {
-              if (e.button === 1) onOpenNewTab(b.url)
-            }}
-            onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
-            onDragStart={(e) => {
-              e.dataTransfer.setData('text/plain', b.id)
-              e.dataTransfer.effectAllowed = 'move'
-            }}
-            onDragOver={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              const rect = e.currentTarget.getBoundingClientRect()
-              const ratio = (e.clientX - rect.left) / rect.width
-              setDragOver({ id: b.id, zone: ratio < 0.5 ? 'before' : 'after' })
-            }}
-            onDragLeave={() => setDragOver((d) => (d?.id === b.id ? null : d))}
-            onDrop={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              const draggedId = e.dataTransfer.getData('text/plain')
-              if (draggedId && draggedId !== b.id && dragOver) {
-                const idx = bookmarks.findIndex((x) => x.id === b.id)
-                const beforeId = dragOver.zone === 'after' ? bookmarks[idx + 1]?.id ?? null : b.id
-                window.lumo.reorderBookmark(draggedId, beforeId)
-              }
-              setDragOver(null)
-            }}
-            onDragEnd={() => setDragOver(null)}
-          >
-            <FaviconImg
-              src={b.favicon}
-              className="bookmark-chip__icon"
-              fallbackClassName="bookmark-chip__dot"
-            />
-            <span>{b.title || b.url}</span>
-          </button>
-        ))
+        onBar.map((b) =>
+          b.kind === 'folder' ? (
+            <button
+              key={b.id}
+              className={`bookmark-chip bookmark-chip--folder ${dnd.dragClass(b.id, 'bookmark-chip')}`}
+              title={b.title}
+              onClick={(e) => {
+                const r = e.currentTarget.getBoundingClientRect()
+                window.lumo.openBookmarkFolder(b.id, { x: r.x, y: r.y, width: r.width, height: r.height })
+              }}
+              onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
+              {...dnd.itemProps(b)}
+            >
+              <Folder size={13} strokeWidth={2.2} className="bookmark-chip__folder" />
+              <span className="bookmark-chip__label">{b.title}</span>
+              <ChevronDown size={11} strokeWidth={2.6} className="bookmark-chip__chevron" />
+            </button>
+          ) : (
+            <button
+              key={b.id}
+              className={`bookmark-chip ${dnd.dragClass(b.id, 'bookmark-chip')}`}
+              title={b.url}
+              onClick={() => onOpen(b.url)}
+              onAuxClick={(e) => {
+                if (e.button === 1) onOpenNewTab(b.url)
+              }}
+              onContextMenu={() => window.lumo.showBookmarkContextMenu(b.id)}
+              {...dnd.itemProps(b)}
+            >
+              <FaviconImg
+                src={b.favicon}
+                className="bookmark-chip__icon"
+                fallbackClassName="bookmark-chip__dot"
+              />
+              <span className="bookmark-chip__label">{b.title || b.url}</span>
+            </button>
+          )
+        )
       )}
     </div>
   )

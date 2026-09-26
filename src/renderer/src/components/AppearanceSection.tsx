@@ -1,8 +1,9 @@
 import type { Settings } from '@shared/ipc'
 import LayoutPicker from './LayoutPicker'
 import { Item, Section } from './SettingsParts'
+import ThemeModeToggle from './ThemeModeToggle'
 
-const PRESETS: { name: string; accent: string; danger: string }[] = [
+export const PRESETS: { name: string; accent: string; danger: string }[] = [
   { name: 'Azul & Vermelho', accent: '#2e6bff', danger: '#ff4d6a' },
   { name: 'Vermelho & Azul', accent: '#ff3b4e', danger: '#2e6bff' },
   { name: 'Roxo & Rosa', accent: '#7c3aed', danger: '#ec4899' },
@@ -37,6 +38,7 @@ export default function AppearanceSection({ settings, onChange }: Props): JSX.El
             <p className="settings-hint">
               O texto e os botões se ajustam sozinhos para continuar legíveis, mesmo com um fundo claro.
             </p>
+            <ThemeModeToggle theme={settings.theme} onChange={(theme) => onChange({ theme })} />
             <div className="preset-row">
               {PRESETS.map((p) => (
                 <button

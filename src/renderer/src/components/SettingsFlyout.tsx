@@ -12,6 +12,7 @@ import {
 import type { Settings } from '@shared/ipc'
 import { applyTheme } from '../lib/useTheme'
 import LayoutPicker from './LayoutPicker'
+import ThemeModeToggle from './ThemeModeToggle'
 
 const PRESETS: { name: string; accent: string; danger: string }[] = [
   { name: 'Azul & Vermelho', accent: '#2e6bff', danger: '#ff4d6a' },
@@ -128,6 +129,13 @@ export default function SettingsFlyout(): JSX.Element {
               <Palette size={13} strokeWidth={2.4} />
               <span>Tema e cores</span>
             </div>
+            {settings && (
+              <ThemeModeToggle
+                theme={settings.theme}
+                disabled={settings.themeFromMod}
+                onChange={(theme) => handleUpdate({ theme })}
+              />
+            )}
             <div className="settings-flyout-presets">
               {PRESETS.map((p) => {
                 const isActive =

@@ -2,7 +2,7 @@ import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import type { UpdateStatus } from '../shared/ipc'
 
-const FIRST_CHECK_DELAY_MS = 20 * 1000
+const FIRST_CHECK_DELAY_MS = 10 * 1000
 const CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
 
 /**

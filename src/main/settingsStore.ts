@@ -17,6 +17,7 @@ const DEFAULTS: Settings = {
   restoreSession: true,
   autoUpdate: true,
   autoHideAddressBar: false,
+  onboarded: false,
   sounds: {
     enabled: false,
     volume: 60,
@@ -60,6 +61,8 @@ export class SettingsStore {
       delete raw.sounds?.modId
       return {
         ...DEFAULTS,
+        // A settings file from before the tour existed belongs to someone who already uses Lumo.
+        onboarded: true,
         ...raw,
         theme: { ...DEFAULTS.theme, ...(raw.theme ?? {}) },
         sounds: { ...DEFAULTS.sounds, ...(raw.sounds ?? {}) },

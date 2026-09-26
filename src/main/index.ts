@@ -10,11 +10,12 @@ import {
   KEY_SOUND_EVENTS,
   type Settings,
   type AnchorBounds,
+  type FolderPrompt,
   type SuggestionsFlyoutShow,
   type SoundEvent,
   type ModInstallResult
 } from '../shared/ipc'
-import { TabManager, buildEditContextItems, searchUrl } from './tabManager'
+import { TabManager, buildEditContextItems, searchUrl, domainOf } from './tabManager'
 import { MemoryManager } from './memoryManager'
 import { SettingsStore } from './settingsStore'
 import { SessionStore } from './sessionStore'
@@ -264,7 +265,11 @@ function createWindow(): void {
   })
   const bars = [addressBar]
   for (const bar of bars) {
-    bar.webContents.on('before-input-event', (_e, input) => {
+    bar.webContents.on('before-input-event', (e, input) => {
+      if (input.type === 'keyDown' && tabManager.handleShortcut(input)) {
+        e.preventDefault()
+        return
+      }
       const sound = keySoundOf(input)
       if (sound) playSound(sound)
     })
@@ -381,6 +386,33 @@ function createWindow(): void {
     return next
   }
   ipcMain.handle(IPC.settingsSet, (_e, partial: Partial<Settings>) => applySettings(partial))
+
+  // Shortcuts that need more than the tab manager: the bookmarks, the settings and the UI itself.
+  tabManager.setOnShortcut((action) => {
+    if (action === 'bookmark') {
+      const tab = tabManager.list().find((t) => t.id === tabManager.getActiveId())
+      if (!tab || tab.url.startsWith('lumo://')) return
+      const existing = bookmarksManager.findByUrl(tab.url)
+      if (existing) bookmarksManager.remove(existing.id)
+      else bookmarksManager.add({ title: tab.title || domainOf(tab.url), url: tab.url, favicon: tab.favicon })
+      chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
+    } else if (action === 'bookmarks-bar') {
+      applySettings({ showBookmarksBar: !settingsStore.get().showBookmarksBar })
+    } else if (action === 'focus-address' && settingsStore.get().autoHideAddressBar) {
+      // The bar is hidden: bring it in, then let its own input take the focus.
+      addressBar.show(settingsStore.get().tabLayout === 'bottom' ? 'bottom' : 'top')
+      addressBar.webContents.focus()
+      addressBar.webContents.send(IPC.shortcutAction, action)
+    } else {
+      mainWindow.webContents.focus()
+      mainWindow.webContents.send(IPC.shortcutAction, action)
+    }
+  })
+  tabManager.setOnFindResult((result) => mainWindow.webContents.send(IPC.findResult, result))
+  ipcMain.on(IPC.findStart, (_e, text: unknown, forward: unknown, findNext: unknown) => {
+    if (typeof text === 'string') tabManager.find(text, forward !== false, findNext === true)
+  })
+  ipcMain.on(IPC.findStop, () => tabManager.stopFind())
   ipcMain.handle(IPC.modsWallpaper, (_e, id: unknown) => (typeof id === 'string' ? modsManager.wallpaper(id) : null))
   ipcMain.on(IPC.uiContentBounds, (_e, r: AnchorBounds) => {
     if (![r?.x, r?.y, r?.width, r?.height].every((n) => Number.isFinite(n))) return
@@ -403,37 +435,151 @@ function createWindow(): void {
     bookmarksManager.remove(id)
     chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
   })
-  ipcMain.on(IPC.bookmarksReorder, (_e, draggedId: string, beforeId: string | null) => {
-    bookmarksManager.reorder(draggedId, beforeId)
-    chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
+  const sendBookmarks = (): void => chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
+  // Naming a folder needs a text field, which a native menu can't show: the main window asks for the name.
+  const askFolderName = (prompt: FolderPrompt): void => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.bookmarksAskName, prompt)
+  }
+  const cleanName = (name: unknown): string => (typeof name === 'string' ? name.trim().slice(0, 60) : '')
+  const openInActiveTab = (url: string): void => {
+    const activeId = tabManager.getActiveId()
+    if (activeId) void tabManager.navigateSmart(activeId, url)
+  }
+
+  ipcMain.on(IPC.bookmarksReorder, (_e, draggedId: string, beforeId: string | null, parentId?: string | null) => {
+    bookmarksManager.reorder(draggedId, beforeId, parentId ?? null)
+    sendBookmarks()
   })
+  ipcMain.on(IPC.bookmarksMove, (_e, id: string, folderId: string | null) => {
+    bookmarksManager.moveToFolder(id, folderId)
+    sendBookmarks()
+  })
+  ipcMain.handle(IPC.bookmarksFolderCreate, (_e, name: unknown, moveId?: string) => {
+    const folder = bookmarksManager.addFolder(cleanName(name))
+    if (typeof moveId === 'string') bookmarksManager.moveToFolder(moveId, folder.id)
+    sendBookmarks()
+  })
+  ipcMain.handle(IPC.bookmarksFolderRename, (_e, id: string, name: unknown) => {
+    bookmarksManager.rename(id, cleanName(name))
+    sendBookmarks()
+  })
+
+  // A folder on the bar opens as a native menu under it (like the other menus, and it draws above the page).
+  ipcMain.on(IPC.bookmarksFolderOpen, (e, id: string, anchor?: AnchorBounds) => {
+    const folder = bookmarksManager.get(id)
+    if (!folder || folder.kind !== 'folder') return
+    const children = bookmarksManager.childrenOf(id)
+    const items: Electron.MenuItemConstructorOptions[] = children.length
+      ? children.map((b) => ({
+          label: (b.title || b.url).slice(0, 60),
+          toolTip: b.url,
+          click: () => openInActiveTab(b.url)
+        }))
+      : [{ label: 'Pasta vazia', enabled: false }]
+    if (children.length > 1) {
+      items.push({ type: 'separator' })
+      items.push({
+        label: 'Abrir tudo em novas abas',
+        click: () => children.forEach((b) => tabManager.create(b.url, { activate: false }))
+      })
+    }
+    const at = shiftAnchor(e.sender, anchor)
+    Menu.buildFromTemplate(items).popup({
+      window: mainWindow,
+      ...(at ? { x: Math.round(at.x), y: Math.round(at.y + at.height) } : {})
+    })
+  })
+
+  // Right-click on the empty part of the bar or of the home page.
+  ipcMain.on(IPC.bookmarksAreaMenu, () => {
+    Menu.buildFromTemplate([{ label: 'Nova pasta…', click: () => askFolderName({ mode: 'create' }) }]).popup({
+      window: mainWindow
+    })
+  })
+
   ipcMain.on(IPC.bookmarksContextMenu, (_e, id: string) => {
-    const bookmark = bookmarksManager.list().find((b) => b.id === id)
+    const bookmark = bookmarksManager.get(id)
     if (!bookmark) return
-    const sendUpdated = (): void => chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
-    Menu.buildFromTemplate([
-      {
-        label: 'Abrir',
-        click: () => {
-          const activeId = tabManager.getActiveId()
-          if (activeId) void tabManager.navigateSmart(activeId, bookmark.url)
+
+    if (bookmark.kind === 'folder') {
+      const children = bookmarksManager.childrenOf(id)
+      Menu.buildFromTemplate([
+        {
+          label: 'Abrir tudo em novas abas',
+          enabled: children.length > 0,
+          click: () => children.forEach((b) => tabManager.create(b.url, { activate: false }))
+        },
+        { label: 'Renomear…', click: () => askFolderName({ mode: 'rename', id, name: bookmark.title }) },
+        { type: 'separator' },
+        {
+          label: 'Mover para o início',
+          click: () => {
+            bookmarksManager.moveToStart(id)
+            sendBookmarks()
+          }
+        },
+        {
+          label: 'Mover para o final',
+          click: () => {
+            bookmarksManager.moveToEnd(id)
+            sendBookmarks()
+          }
+        },
+        { type: 'separator' },
+        {
+          label: 'Remover a pasta (os favoritos voltam para a barra)',
+          click: () => {
+            bookmarksManager.remove(id)
+            sendBookmarks()
+          }
         }
-      },
+      ]).popup({ window: mainWindow })
+      return
+    }
+
+    const folders = bookmarksManager.folders()
+    Menu.buildFromTemplate([
+      { label: 'Abrir', click: () => openInActiveTab(bookmark.url) },
       { label: 'Abrir em nova aba', click: () => tabManager.create(bookmark.url, { activate: false }) },
       { label: 'Copiar link', click: () => clipboard.writeText(bookmark.url) },
+      { type: 'separator' },
+      {
+        label: 'Mover para a pasta',
+        submenu: [
+          ...folders.map((f): Electron.MenuItemConstructorOptions => ({
+            label: f.title,
+            type: 'radio',
+            checked: bookmark.parentId === f.id,
+            click: () => {
+              bookmarksManager.moveToFolder(id, f.id)
+              sendBookmarks()
+            }
+          })),
+          ...(folders.length ? [{ type: 'separator' } as const] : []),
+          { label: 'Nova pasta…', click: () => askFolderName({ mode: 'create', moveId: id }) },
+          {
+            label: 'Fora de pastas (na barra)',
+            enabled: !!bookmark.parentId,
+            click: () => {
+              bookmarksManager.moveToFolder(id, null)
+              sendBookmarks()
+            }
+          }
+        ]
+      },
       { type: 'separator' },
       {
         label: 'Mover para o início',
         click: () => {
           bookmarksManager.moveToStart(id)
-          sendUpdated()
+          sendBookmarks()
         }
       },
       {
         label: 'Mover para o final',
         click: () => {
           bookmarksManager.moveToEnd(id)
-          sendUpdated()
+          sendBookmarks()
         }
       },
       { type: 'separator' },
@@ -441,7 +587,7 @@ function createWindow(): void {
         label: 'Remover dos favoritos',
         click: () => {
           bookmarksManager.remove(id)
-          sendUpdated()
+          sendBookmarks()
         }
       }
     ]).popup({ window: mainWindow })
@@ -456,7 +602,7 @@ function createWindow(): void {
   ipcMain.handle(IPC.historyRemove, (_e, id: string) => historyManager.removeVisit(id))
   ipcMain.handle(IPC.historyClear, () => historyManager.clear())
   ipcMain.handle(IPC.historySuggest, (_e, query: unknown) =>
-    typeof query === 'string' ? historyManager.suggest(query, bookmarksManager.list(), 6) : []
+    typeof query === 'string' ? historyManager.suggest(query, bookmarksManager.list().filter((b) => b.kind !== 'folder'), 6) : []
   )
   ipcMain.on(IPC.suggestionsFlyoutShow, (e, payload: SuggestionsFlyoutShow) => {
     suggestionsTarget = e.sender

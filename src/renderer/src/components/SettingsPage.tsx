@@ -244,6 +244,14 @@ export default function SettingsPage({ settings, onChange }: Props): JSX.Element
         return (
           <>
             <DefaultBrowserSection />
+            <Section title="Tour de boas-vindas">
+              <Item keywords="tour introdução primeira vez tutorial ajuda começar">
+                <p className="settings-hint">Reveja as personalizações básicas: tema, abas, barras e sons.</p>
+                <button className="restart-btn" onClick={() => onChange({ onboarded: false })}>
+                  Refazer o tour
+                </button>
+              </Item>
+            </Section>
             <Section title="Sessão">
               <Item keywords="restaurar abas abertas iniciar reabrir">
                 <label className="settings-toggle">

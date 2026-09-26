@@ -5,12 +5,14 @@ import {
   Menu,
   MenuItemConstructorOptions,
   clipboard,
+  dialog,
   Input
 } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { PRIVATE_PARTITION } from './privateSession'
-import type { TabSnapshot, CertWarningPayload, SoundEvent } from '../shared/ipc'
+import type { TabSnapshot, CertWarningPayload, SoundEvent, ShortcutAction, FindResult } from '../shared/ipc'
 import { resolveNavigationIntent, suggestTabGroups } from './opencode'
 import type { HistoryManager } from './historyManager'
 import type { SavedSession } from './sessionStore'
@@ -24,6 +26,8 @@ const SPLIT_GAP = 3
 const MAX_SPLIT_SIZE = 3
 // A background tab burning at least this much CPU is treated as doing real work (encoding, sync, game loop, …).
 const BUSY_CPU_PERCENT = 5
+// The steps Chrome zooms through (25% to 500%).
+const ZOOM_STEPS = [0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5]
 const TAB_PRELOAD_PATH = join(__dirname, '../preload/tab.js')
 
 export interface Tab {
@@ -76,6 +80,8 @@ export class TabManager {
   private onAudible: (audible: boolean) => void = () => {}
   private audible = false
   private onPrivateClosed: () => void = () => {}
+  private shortcutListener: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar') => void = () => {}
+  private findListener: (result: FindResult) => void = () => {}
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -99,6 +105,14 @@ export class TabManager {
   }
 
   /** Called when the last private tab has closed, so what the private session stored can be wiped. */
+  setOnShortcut(cb: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar') => void): void {
+    this.shortcutListener = cb
+  }
+
+  setOnFindResult(cb: (result: FindResult) => void): void {
+    this.findListener = cb
+  }
+
   setOnPrivateClosed(cb: () => void): void {
     this.onPrivateClosed = cb
   }
@@ -312,6 +326,11 @@ export class TabManager {
       }
       if (this.handleShortcut(input, tab.id)) e.preventDefault()
     })
+    wc.on('found-in-page', (_e, result) => {
+      if (tab.id === this.activeId) this.findListener({ active: result.activeMatchOrdinal, matches: result.matches })
+    })
+    // Ctrl + wheel asks for a zoom change; Electron leaves it to us.
+    wc.on('zoom-changed', (_e, direction) => this.zoomBy(direction === 'in' ? 1 : -1, tab.id))
     wc.on('context-menu', (_e, params) => this.showPageContextMenu(wc, params))
     wc.on('focus', () => this.setFocusedPane(tab.id))
     wc.on('enter-html-full-screen', () => {
@@ -384,46 +403,240 @@ export class TabManager {
     this.onChange()
   }
 
-  handleShortcut(input: Pick<Input, 'key' | 'control' | 'meta' | 'shift'>, tabId?: string): boolean {
-    if (input.key === 'F11') {
-      this.toggleToolbarPeek()
+  private activeWebContents(tabId?: string): Electron.WebContents | null {
+    const tab = tabId ? this.get(tabId) : this.getActive()
+    const wc = tab?.view?.webContents
+    return wc && !wc.isDestroyed() ? wc : null
+  }
+
+  /** Steps to the next (+1) or previous (-1) tab, wrapping around. */
+  private cycleTab(direction: 1 | -1): void {
+    if (this.tabs.length < 2) return
+    const idx = this.tabs.findIndex((t) => t.id === this.activeId)
+    this.activate(this.tabs[(idx + direction + this.tabs.length) % this.tabs.length].id)
+  }
+
+  /** Ctrl+1…8 pick that tab; Ctrl+9 always the last one, as in Chrome. */
+  private selectTabAt(digit: number): void {
+    const target = digit === 9 ? this.tabs[this.tabs.length - 1] : this.tabs[digit - 1]
+    if (target) this.activate(target.id)
+  }
+
+  private moveTab(id: string, direction: 1 | -1): void {
+    const idx = this.tabs.findIndex((t) => t.id === id)
+    const to = idx + direction
+    if (idx === -1 || to < 0 || to >= this.tabs.length) return
+    // reorder() puts the dragged tab before another one (null = at the end).
+    if (direction === -1) this.reorder(id, this.tabs[to].id)
+    else this.reorder(id, this.tabs[to + 1]?.id ?? null)
+  }
+
+  /** Zoom in (+1), out (-1) or back to 100% (0), through Chrome's steps. */
+  zoomBy(direction: 1 | -1 | 0, tabId?: string): void {
+    const wc = this.activeWebContents(tabId)
+    if (!wc) return
+    if (direction === 0) {
+      wc.setZoomFactor(1)
+      return
+    }
+    const current = wc.getZoomFactor()
+    const next =
+      direction === 1
+        ? ZOOM_STEPS.find((z) => z > current + 0.001)
+        : [...ZOOM_STEPS].reverse().find((z) => z < current - 0.001)
+    if (next) wc.setZoomFactor(next)
+  }
+
+  find(text: string, forward: boolean, findNext: boolean): void {
+    const wc = this.activeWebContents()
+    if (!wc || !text) return
+    wc.findInPage(text, { forward, findNext })
+  }
+
+  /** Closes the find highlight and hands the keyboard back to the page. */
+  stopFind(): void {
+    const wc = this.activeWebContents()
+    if (!wc) return
+    wc.stopFindInPage('clearSelection')
+    wc.focus()
+  }
+
+  private async savePage(tabId?: string): Promise<void> {
+    const tab = tabId ? this.get(tabId) : this.getActive()
+    const wc = this.activeWebContents(tabId)
+    if (!tab || !wc) return
+    const name = (tab.title || domainOf(tab.url)).replace(/[\\/:*?"<>|]+/g, ' ').trim() || 'pagina'
+    const { canceled, filePath } = await dialog.showSaveDialog(this.win, {
+      defaultPath: `${name}.html`,
+      filters: [{ name: 'Página da web', extensions: ['html'] }]
+    })
+    if (!canceled && filePath) await wc.savePage(filePath, 'HTMLComplete').catch(() => {})
+  }
+
+  private async openFile(): Promise<void> {
+    const { canceled, filePaths } = await dialog.showOpenDialog(this.win, { properties: ['openFile'] })
+    if (!canceled && filePaths[0]) this.create(pathToFileURL(filePaths[0]).href)
+  }
+
+  private viewSource(tabId?: string): void {
+    const tab = tabId ? this.get(tabId) : this.getActive()
+    if (tab && /^https?:\/\//i.test(tab.url)) this.create(`view-source:${tab.url}`, { incognito: tab.incognito })
+  }
+
+  /**
+   * The keyboard shortcuts shared with other browsers (mostly Chrome). Called for keys pressed in the page
+   * views, the main window and the address bar overlay; returns true when the key was ours.
+   */
+  handleShortcut(input: Pick<Input, 'key' | 'control' | 'meta' | 'shift' | 'alt'>, tabId?: string): boolean {
+    const key = input.key.toLowerCase()
+    const target = tabId ?? this.activeId
+    const ctrl = input.control || input.meta
+
+    if (key === 'f11') {
+      // Fullscreen video keeps its own peek; otherwise F11 makes the whole window fullscreen.
+      if (this.getActive()?.isFullscreen) this.toggleToolbarPeek()
+      else this.win.setFullScreen(!this.win.isFullScreen())
       return true
     }
-    const ctrl = input.control || input.meta
-    const key = input.key.toLowerCase()
     if (key === 'f5' || (ctrl && key === 'r')) {
-      const id = tabId ?? this.activeId
-      if (id) {
-        if (ctrl || input.shift) this.hardReload(id)
-        else this.reload(id)
+      if (target) {
+        if (ctrl || input.shift) this.hardReload(target)
+        else this.reload(target)
       }
       return true
     }
-    if (!ctrl) return false
-    if (!input.shift && key === 'j') {
-      this.openInternal(DOWNLOADS_URL)
+    if (key === 'f6') {
+      this.shortcutListener('focus-address')
       return true
     }
-    if (!input.shift && key === 'h') {
-      this.openInternal(HISTORY_URL)
+    if (key === 'f3') {
+      this.shortcutListener(input.shift ? 'find-prev' : 'find-next')
       return true
     }
-    if (input.shift && key === 'n') {
-      this.create(undefined, { incognito: true })
+    if (key === 'escape') {
+      // Stops a page that is still loading; the key still reaches the page (closing dialogs, etc.).
+      const wc = this.activeWebContents(tabId)
+      if (wc?.isLoading()) wc.stop()
+      return false
+    }
+
+    if (input.alt && !ctrl && !input.shift) {
+      if (key === 'arrowleft') {
+        if (target) this.goBack(target)
+        return true
+      }
+      if (key === 'arrowright') {
+        if (target) this.goForward(target)
+        return true
+      }
+      if (key === 'home') {
+        const tab = target ? this.get(target) : undefined
+        if (tab) this.loadInTab(tab, DEFAULT_NEW_TAB_URL)
+        return true
+      }
+      if (key === 'd') {
+        this.shortcutListener('focus-address')
+        return true
+      }
+      return false
+    }
+
+    if (!ctrl || input.alt) return false
+
+    // Switching and moving tabs
+    if (key === 'tab' || key === 'pagedown' || key === 'pageup') {
+      if (input.shift && key !== 'tab') {
+        if (target) this.moveTab(target, key === 'pagedown' ? 1 : -1)
+      } else {
+        this.cycleTab(key === 'pageup' || (key === 'tab' && input.shift) ? -1 : 1)
+      }
       return true
     }
-    if (input.shift && key === 't') {
-      this.reopenLastClosed()
+    if (!input.shift && /^[1-9]$/.test(key)) {
+      this.selectTabAt(Number(key))
       return true
     }
-    if (key === 't') {
-      this.create()
+
+    // Zoom ('+' is Shift+'=' on most layouts, so both count)
+    if (key === '+' || key === '=') {
+      this.zoomBy(1, target ?? undefined)
       return true
     }
-    if (key === 'w') {
-      const id = tabId ?? this.activeId
-      if (id) this.close(id)
+    if (key === '-' || key === '_') {
+      this.zoomBy(-1, target ?? undefined)
       return true
+    }
+    if (key === '0') {
+      this.zoomBy(0, target ?? undefined)
+      return true
+    }
+
+    if (input.shift) {
+      if (key === 'n') {
+        this.create(undefined, { incognito: true })
+        return true
+      }
+      if (key === 't') {
+        this.reopenLastClosed()
+        return true
+      }
+      if (key === 'w') {
+        this.win.close()
+        return true
+      }
+      if (key === 'j' || key === 'i') {
+        if (target) this.toggleDevTools(target)
+        return true
+      }
+      if (key === 'b') {
+        this.shortcutListener('bookmarks-bar')
+        return true
+      }
+      if (key === 'g') {
+        this.shortcutListener('find-prev')
+        return true
+      }
+      return false
+    }
+
+    switch (key) {
+      case 't':
+        this.create()
+        return true
+      case 'w':
+      case 'f4':
+        if (target) this.close(target)
+        return true
+      case 'j':
+        this.openInternal(DOWNLOADS_URL)
+        return true
+      case 'h':
+        this.openInternal(HISTORY_URL)
+        return true
+      case 'd':
+        this.shortcutListener('bookmark')
+        return true
+      case 'l':
+        this.shortcutListener('focus-address')
+        return true
+      case 'f':
+        this.shortcutListener('find')
+        return true
+      case 'g':
+        this.shortcutListener('find-next')
+        return true
+      case 'p':
+        this.activeWebContents(tabId)?.print()
+        return true
+      case 's':
+        void this.savePage(tabId)
+        return true
+      case 'o':
+        void this.openFile()
+        return true
+      case 'u':
+        this.viewSource(tabId)
+        return true
     }
     return false
   }
@@ -1033,6 +1246,7 @@ export function normalizeUrlOrNull(input: string): string | null {
   if (!trimmed) return null
 
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed
+  if (/^view-source:https?:\/\//i.test(trimmed)) return trimmed
   if (/^localhost(:\d+)?(\/.*)?$/i.test(trimmed)) return `http://${trimmed}`
 
   const hasSpace = /\s/.test(trimmed)
