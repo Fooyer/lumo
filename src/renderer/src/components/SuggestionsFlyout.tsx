@@ -3,7 +3,7 @@ import { Star } from 'lucide-react'
 import type { SuggestionsFlyoutState } from '@shared/ipc'
 import { SUGGESTION_ROW_HEIGHT } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
-import { lighten } from '../lib/color'
+import { applyTheme } from '../lib/useTheme'
 
 function shortUrl(url: string): string {
   return url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/$/, '')
@@ -14,14 +14,6 @@ export default function SuggestionsFlyout(): JSX.Element | null {
   const [state, setState] = useState<SuggestionsFlyoutState | null>(null)
 
   useEffect(() => {
-    const applyTheme = (theme: { accent: string; danger: string; bg: string }): void => {
-      const root = document.documentElement
-      root.style.setProperty('--accent', theme.accent)
-      root.style.setProperty('--danger', theme.danger)
-      root.style.setProperty('--bg', theme.bg)
-      root.style.setProperty('--bg-elevated', lighten(theme.bg, 0.05))
-      root.style.setProperty('--border', lighten(theme.bg, 0.14))
-    }
     void window.lumo.getSettings().then((s) => applyTheme(s.theme))
     const offSettings = window.lumo.onSettingsChanged((s) => applyTheme(s.theme))
     const offState = window.lumo.onSuggestionsFlyoutState(setState)

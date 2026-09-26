@@ -5,12 +5,12 @@ import {
   Cpu,
   History,
   LayoutPanelLeft,
-  MemoryStick,
   SlidersHorizontal,
-  Palette
+  Palette,
+  Store
 } from 'lucide-react'
 import type { Settings } from '@shared/ipc'
-import { lighten } from '../lib/color'
+import { applyTheme } from '../lib/useTheme'
 import LayoutPicker from './LayoutPicker'
 
 const PRESETS: { name: string; accent: string; danger: string }[] = [
@@ -25,25 +25,8 @@ const PRESETS: { name: string; accent: string; danger: string }[] = [
 export default function SettingsFlyout(): JSX.Element {
   const [settings, setSettings] = useState<Settings | null>(null)
   const [isOpen, setIsOpen] = useState(false)
-  const [memoryMB, setMemoryMB] = useState<number | null>(null)
 
-  // The flyout is its own web contents and doesn't get the main window's memory broadcasts, so poll while open.
-  useEffect(() => {
-    if (!isOpen) return
-    const read = (): void => void window.lumo.getMemory().then((m) => setMemoryMB(m?.totalMB ?? null))
-    read()
-    const timer = setInterval(read, 3000)
-    return () => clearInterval(timer)
-  }, [isOpen])
-
-  const applyThemeVars = (s: Settings): void => {
-    const root = document.documentElement
-    root.style.setProperty('--accent', s.theme.accent)
-    root.style.setProperty('--danger', s.theme.danger)
-    root.style.setProperty('--bg', s.theme.bg)
-    root.style.setProperty('--bg-elevated', lighten(s.theme.bg, 0.05))
-    root.style.setProperty('--border', lighten(s.theme.bg, 0.14))
-  }
+  const applyThemeVars = (s: Settings): void => applyTheme(s.theme)
 
   useEffect(() => {
     void window.lumo.getSettings().then((s) => {
@@ -154,7 +137,8 @@ export default function SettingsFlyout(): JSX.Element {
                   <button
                     key={p.name}
                     className={`settings-flyout-swatch ${isActive ? 'settings-flyout-swatch--active' : ''}`}
-                    title={p.name}
+                    title={settings?.themeFromMod ? 'As cores vêm do mod ativo' : p.name}
+                    disabled={settings?.themeFromMod}
                     onClick={() =>
                       handleUpdate({
                         theme: {
@@ -244,29 +228,26 @@ export default function SettingsFlyout(): JSX.Element {
                   <span className="settings-flyout-slider" />
                 </div>
               </label>
-
-              {/* Uso de RAM */}
-              <div className="settings-flyout-toggle-row">
-                <div className="settings-flyout-toggle-icon">
-                  <MemoryStick size={15} strokeWidth={2.2} />
-                </div>
-                <div className="settings-flyout-toggle-info">
-                  <span className="settings-flyout-toggle-label">Uso de RAM</span>
-                  <span className="settings-flyout-toggle-desc">Total usado pelo Lumo</span>
-                </div>
-                <span className="settings-flyout-ram">
-                  {memoryMB !== null ? `${memoryMB} MB` : '…'}
-                </span>
-              </div>
             </div>
           </div>
         </div>
 
         {/* Footer */}
-        <div className="settings-flyout-footer">
-          <button className="settings-flyout-advanced-btn" onClick={handleOpenAdvanced}>
-            <SlidersHorizontal size={14} strokeWidth={2.2} />
-            <span>Configurações completas</span>
+        <div className="settings-flyout-footer settings-flyout-footer--tiles">
+          <button
+            className="settings-flyout-tile"
+            onClick={() => {
+              setIsOpen(false)
+              window.lumo.closeSettingsFlyout()
+              window.lumo.openModStore()
+            }}
+          >
+            <Store size={18} strokeWidth={2} />
+            <span>Loja de mods</span>
+          </button>
+          <button className="settings-flyout-tile" onClick={handleOpenAdvanced}>
+            <SlidersHorizontal size={18} strokeWidth={2} />
+            <span>Todas as configurações</span>
           </button>
         </div>
       </div>

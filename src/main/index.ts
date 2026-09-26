@@ -1,8 +1,19 @@
-import { app, BrowserWindow, ipcMain, session, shell, clipboard, Menu, screen } from 'electron'
+import { app, BrowserWindow, ipcMain, session, shell, clipboard, Menu, screen, protocol, dialog, net } from 'electron'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
-import { IPC, type Settings, type AnchorBounds, type SuggestionsFlyoutShow } from '../shared/ipc'
+import {
+  IPC,
+  MOD_SCHEME,
+  GX_STORE_URL,
+  GX_STORE_MOD_PAGE,
+  KEY_SOUND_EVENTS,
+  type Settings,
+  type AnchorBounds,
+  type SuggestionsFlyoutShow,
+  type SoundEvent,
+  type ModInstallResult
+} from '../shared/ipc'
 import { TabManager, buildEditContextItems, searchUrl } from './tabManager'
 import { MemoryManager } from './memoryManager'
 import { SettingsStore } from './settingsStore'
@@ -16,10 +27,12 @@ import { OverlayPanel } from './overlayPanel'
 import { EdgeOverlay } from './edgeOverlay'
 import { SuggestionsFlyout } from './suggestionsFlyout'
 import { Updater } from './updater'
+import { ModsManager } from './modsManager'
 
 const settingsStore = new SettingsStore(join(app.getPath('userData'), 'lumo-settings.json'))
 const bookmarksManager = new BookmarksManager(join(app.getPath('userData'), 'lumo-bookmarks.json'))
 const historyManager = new HistoryManager(join(app.getPath('userData'), 'lumo-history.json'))
+const modsManager = new ModsManager(join(app.getPath('userData'), 'mods'))
 const updater = new Updater(() => settingsStore.get().autoUpdate)
 const sessionStore = new SessionStore(join(app.getPath('userData'), 'lumo-session.json'))
 const SESSION_SAVE_DEBOUNCE_MS = 800
@@ -31,6 +44,28 @@ const EDGE_POLL_MS = 60
 const EDGE_COLLAPSE_TICKS = 5
 // Constructed once the app is ready (below) — it reads session.defaultSession, which isn't available before then.
 let downloadsManager: DownloadsManager
+
+/** What the renderers see: `theme` is the chosen mod's colors when the user picked a mod for the colors. */
+function publicSettings(): Settings {
+  const settings = settingsStore.get()
+  const modTheme = settings.mods.theme ? modsManager.theme(settings.mods.theme) : null
+  if (!modTheme) return { ...settings, themeFromMod: false }
+  return { ...settings, theme: { ...settings.theme, ...modTheme }, themeFromMod: true }
+}
+
+// Mod audio is served from the mods folder through this scheme; `stream` lets the audio element seek.
+protocol.registerSchemesAsPrivileged([
+  { scheme: MOD_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }
+])
+
+/** Which sound a key press makes; shortcuts (Ctrl/Alt/Cmd + key) and non-typing keys make none. */
+function keySoundOf(input: Electron.Input): SoundEvent | null {
+  if (input.type !== 'keyDown' || input.control || input.meta || input.alt) return null
+  if (input.key === 'Backspace') return 'key-backspace'
+  if (input.key === 'Enter') return 'key-enter'
+  if (input.key === ' ') return 'key-space'
+  return input.key.length === 1 ? 'key-letter' : null
+}
 
 // As the default browser, other programs launch Lumo with a URL: a second launch must hand that URL to
 // the running window instead of opening another one.
@@ -106,7 +141,7 @@ function createWindow(): void {
     height: 800,
     show: false,
     frame: false,
-    backgroundColor: settingsStore.get().theme.bg,
+    backgroundColor: publicSettings().theme.bg,
     icon: join(__dirname, '../../resources/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -136,6 +171,67 @@ function createWindow(): void {
   })
   const suggestionsFlyout = new SuggestionsFlyout(mainWindow)
 
+  // Sounds are played by the main window's renderer (the one page of the UI that always exists).
+  const playSound = (event: SoundEvent): void => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.soundPlay, event)
+  }
+  tabManager.setOnSound(playSound)
+  tabManager.setOnAudibleChange((audible) => {
+    if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.soundDuck, audible)
+  })
+  // Keys typed into a page are reported by that page's preload (only when a text field has focus).
+  ipcMain.on(IPC.soundKey, (_e, event: SoundEvent) => {
+    if (KEY_SOUND_EVENTS.includes(event)) playSound(event)
+  })
+  ipcMain.on(IPC.modsOpenStore, () => tabManager.create(GX_STORE_URL))
+  ipcMain.handle(IPC.modsInstallStore, async (_e, tabId: unknown): Promise<ModInstallResult> => {
+    const wc = typeof tabId === 'string' ? tabManager.list().find((t) => t.id === tabId)?.view?.webContents : undefined
+    if (!wc || wc.isDestroyed() || !GX_STORE_MOD_PAGE.test(wc.getURL())) {
+      return { ok: false, error: 'Abra a página de um mod da GX Store.' }
+    }
+    // The mod's files are addressed by three UUIDs that only its page shows. The page in the tab can't be read
+    // for them: the store is a single-page app, so after browsing from one mod to another the document still
+    // holds the data of the page that was loaded first. The server's own copy of this exact address is reliable.
+    let html: string
+    try {
+      const res = await net.fetch(wc.getURL())
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      html = (await res.text()).replaceAll('\\/', '/')
+    } catch {
+      return { ok: false, error: 'Não consegui abrir a página do mod na loja. Verifique a conexão.' }
+    }
+    const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+    const counts = new Map<string, number>()
+    for (const m of html.matchAll(new RegExp(`mods\\.store\\.gx\\.me/mods/(${uuid})/(${uuid})/(${uuid})/`, 'g'))) {
+      const key = `${m[1]}/${m[2]}/${m[3]}`
+      counts.set(key, (counts.get(key) ?? 0) + 1)
+    }
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (!best) return { ok: false, error: 'Não achei os arquivos deste mod na página. Espere ela carregar por completo.' }
+    return modsManager.installFromStore(best.split('/') as [string, string, string])
+  })
+  ipcMain.handle(IPC.modsList, () => modsManager.list())
+  ipcMain.handle(IPC.modsSounds, (_e, id: unknown) => (typeof id === 'string' ? modsManager.sounds(id) : null))
+  ipcMain.handle(IPC.modsRemove, (_e, id: unknown) => {
+    if (typeof id !== 'string') return
+    modsManager.remove(id)
+    // Whatever part was taken from the removed mod goes back to Lumo's own.
+    const current = settingsStore.get().mods
+    const cleared = Object.fromEntries(Object.entries(current).filter(([, v]) => v === id).map(([k]) => [k, null]))
+    if (Object.keys(cleared).length) applySettings({ mods: cleared as Settings['mods'] })
+  })
+  ipcMain.handle(IPC.modsInstall, async (_e, kind: unknown): Promise<ModInstallResult> => {
+    // Windows and Linux pickers can't choose a file or a folder in the same dialog.
+    const folder = kind === 'folder'
+    const picked = await dialog.showOpenDialog(mainWindow, {
+      title: 'Instalar mod',
+      properties: [folder ? 'openDirectory' : 'openFile'],
+      filters: folder ? [] : [{ name: 'Mod (.zip, .crx)', extensions: ['zip', 'crx'] }]
+    })
+    if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true }
+    return modsManager.install(picked.filePaths[0])
+  })
+
   // Auto-hide address bar: it slides in over the page from the top (under the tabs) or, in the bottom
   // layout, from the bottom (above the tabs) — a view above the page, so the page is never resized.
   let addressBarHeight = ADDRESS_BAR_DEFAULT_PX
@@ -149,6 +245,12 @@ function createWindow(): void {
     return { x: 0, y, width, height }
   })
   const bars = [addressBar]
+  for (const bar of bars) {
+    bar.webContents.on('before-input-event', (_e, input) => {
+      const sound = keySoundOf(input)
+      if (sound) playSound(sound)
+    })
+  }
   // Everything the bars render comes from the same broadcasts as the main window.
   const chromeSend = (channel: string, payload?: unknown): void => {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
@@ -247,15 +349,20 @@ function createWindow(): void {
   )
   ipcMain.on(IPC.tabsRemoveFromSplit, (_e, id: string) => tabManager.removeFromSplit(id))
   ipcMain.handle(IPC.navigate, (_e, id: string, input: string) => tabManager.navigateSmart(id, input))
-  ipcMain.handle(IPC.settingsGet, () => settingsStore.get())
-  ipcMain.handle(IPC.settingsSet, (_e, partial: Partial<Settings>) => {
-    const next = settingsStore.set(partial)
+  ipcMain.handle(IPC.settingsGet, () => publicSettings())
+  const applySettings = (partial: Partial<Settings>): Settings => {
+    settingsStore.set(partial)
+    const next = publicSettings()
     mainWindow.setBackgroundColor(next.theme.bg)
-    // The main window and the quick-settings flyout are separate renderers; keep both in sync.
+    // The main window, the panels and the suggestions list are separate renderers; keep them all in sync.
     chromeSend(IPC.settingsChanged, next)
     settingsFlyout.send(IPC.settingsChanged, next)
+    downloadsFlyout.send(IPC.settingsChanged, next)
+    suggestionsFlyout.send(IPC.settingsChanged, next)
     return next
-  })
+  }
+  ipcMain.handle(IPC.settingsSet, (_e, partial: Partial<Settings>) => applySettings(partial))
+  ipcMain.handle(IPC.modsWallpaper, (_e, id: unknown) => (typeof id === 'string' ? modsManager.wallpaper(id) : null))
   ipcMain.on(IPC.uiContentBounds, (_e, r: AnchorBounds) => {
     if (![r?.x, r?.y, r?.width, r?.height].every((n) => Number.isFinite(n))) return
     tabManager.setContentBounds({
@@ -413,7 +520,12 @@ function createWindow(): void {
   mainWindow.on('unmaximize', () => chromeSend(IPC.windowMaximizedChanged, false))
 
   mainWindow.webContents.on('before-input-event', (e, input) => {
-    if (input.type === 'keyDown' && tabManager.handleShortcut(input)) e.preventDefault()
+    if (input.type === 'keyDown' && tabManager.handleShortcut(input)) {
+      e.preventDefault()
+      return
+    }
+    const sound = keySoundOf(input)
+    if (sound) playSound(sound)
   })
   mainWindow.webContents.on('context-menu', (_e, params) => {
     const items = buildEditContextItems(params, (query) => tabManager.create(searchUrl(query)))
@@ -512,6 +624,7 @@ app.whenReady().then(async () => {
 
   downloadsManager = new DownloadsManager(join(app.getPath('userData'), 'lumo-downloads.json'))
   presentAsFirefoxToGoogleSignIn()
+  protocol.handle(MOD_SCHEME, (request) => modsManager.handleRequest(request))
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)

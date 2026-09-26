@@ -9,7 +9,7 @@ import {
 } from 'electron'
 import { randomUUID } from 'crypto'
 import { join } from 'path'
-import type { TabSnapshot, CertWarningPayload } from '../shared/ipc'
+import type { TabSnapshot, CertWarningPayload, SoundEvent } from '../shared/ipc'
 import { resolveNavigationIntent, suggestTabGroups } from './opencode'
 import type { HistoryManager } from './historyManager'
 import type { SavedSession } from './sessionStore'
@@ -69,6 +69,9 @@ export class TabManager {
   private fullscreenListener: (hidden: boolean) => void = () => {}
   private history: HistoryManager | null = null
   private onViewsChanged: () => void = () => {}
+  private onSound: (event: SoundEvent) => void = () => {}
+  private onAudible: (audible: boolean) => void = () => {}
+  private audible = false
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -87,6 +90,25 @@ export class TabManager {
   }
 
   /** Called after page views were (re)attached, so overlays that must stay on top can re-raise themselves. */
+  setOnSound(cb: (event: SoundEvent) => void): void {
+    this.onSound = cb
+  }
+
+  /** Called when any tab starts or stops making sound (used to lower the background music). */
+  setOnAudibleChange(cb: (audible: boolean) => void): void {
+    this.onAudible = cb
+  }
+
+  private checkAudible(): void {
+    const audible = this.tabs.some((t) => {
+      const wc = t.view?.webContents
+      return !!wc && !wc.isDestroyed() && wc.isCurrentlyAudible()
+    })
+    if (audible === this.audible) return
+    this.audible = audible
+    this.onAudible(audible)
+  }
+
   setOnViewsChanged(cb: () => void): void {
     this.onViewsChanged = cb
   }
@@ -228,6 +250,7 @@ export class TabManager {
     wc.on('media-paused', () => {
       tab.mediaPlaying = false
     })
+    wc.on('audio-state-changed', () => this.checkAudible())
     wc.on('did-start-loading', () => {
       tab.loading = true
       this.onChange()
@@ -492,6 +515,7 @@ export class TabManager {
     if (!internal && !placeholder) this.createView(tab, url)
     if (activate) this.activate(id)
     else this.onChange()
+    if (!restored) this.onSound('tab-open')
     return id
   }
 
@@ -604,6 +628,8 @@ export class TabManager {
     const idx = this.tabs.findIndex((t) => t.id === id)
     if (idx === -1) return
     const [tab] = this.tabs.splice(idx, 1)
+    this.onSound('tab-close')
+    setImmediate(() => this.checkAudible())
 
     if (tab.splitGroupId) this.leaveGroup(tab.id, tab.splitGroupId)
     if (tab.view) {
@@ -767,6 +793,7 @@ export class TabManager {
     tab.view = null
     tab.suspended = true
     tab.memoryMB = null
+    this.checkAudible()
     this.onChange()
   }
 

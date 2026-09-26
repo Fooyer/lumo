@@ -65,3 +65,25 @@ window.addEventListener('message', (event) => {
     ipcRenderer.send('dialog:alert', { message: data.message ?? '', domain: location.hostname })
   }
 })
+
+// Typing sounds: tells the UI a key was pressed in a text field. Only the kind of key is sent, never which one.
+function isEditable(el: Element | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.isContentEditable) return true
+  if (el instanceof HTMLTextAreaElement) return !el.readOnly && !el.disabled
+  if (el instanceof HTMLInputElement) {
+    return !el.readOnly && !el.disabled && /^(text|search|email|url|tel|password|number)$/.test(el.type)
+  }
+  return false
+}
+
+window.addEventListener(
+  'keydown',
+  (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing || !isEditable(document.activeElement)) return
+    const kind =
+      e.key === 'Backspace' ? 'key-backspace' : e.key === 'Enter' ? 'key-enter' : e.key === ' ' ? 'key-space' : e.key.length === 1 ? 'key-letter' : null
+    if (kind) ipcRenderer.send('sound:key', kind)
+  },
+  true
+)

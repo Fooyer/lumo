@@ -77,7 +77,17 @@ export const IPC = {
   alertDialogShow: 'dialog:alert-show',
   certWarningShow: 'dialog:cert-show',
   certWarningRespond: 'dialog:cert-respond',
-  setModalActive: 'ui:set-modal-active'
+  setModalActive: 'ui:set-modal-active',
+  soundKey: 'sound:key',
+  soundPlay: 'sound:play',
+  soundDuck: 'sound:duck',
+  modsList: 'mods:list',
+  modsInstall: 'mods:install',
+  modsRemove: 'mods:remove',
+  modsSounds: 'mods:sounds',
+  modsWallpaper: 'mods:wallpaper',
+  modsOpenStore: 'mods:open-store',
+  modsInstallStore: 'mods:install-store',
 } as const
 
 export interface TabSnapshot {
@@ -129,6 +139,28 @@ export interface DefaultBrowserStatus {
 
 export type TabLayout = 'top' | 'left' | 'right' | 'bottom'
 
+/** The parts of a mod that can be used on their own. */
+export type ModPart = 'theme' | 'wallpaper' | 'keyboard' | 'tabs' | 'music'
+export type ModSelection = Record<ModPart, string | null>
+
+export interface SoundSettings {
+  /** Master switch for the effect sounds (typing, tabs). Everything is off until the user opts in. */
+  enabled: boolean
+  /** Effects volume, 0-100. */
+  volume: number
+  keyboard: boolean
+  tabs: boolean
+  music: boolean
+  /** Background music volume, 0-100. */
+  musicVolume: number
+  /** Lower the background music while a tab is playing sound (a video, a call). */
+  duckMusic: boolean
+  /** Where the background music comes from: the tracks of the mod chosen in `mods.music`, or an internet radio stream. */
+  musicSource: 'mod' | 'radio'
+  radioUrl: string
+  radioName: string
+}
+
 export interface Settings {
   memorySaverEnabled: boolean
   idleSuspendMinutes: number
@@ -143,6 +175,14 @@ export interface Settings {
   autoUpdate: boolean
   /** Hide the address bar (with the bookmarks and tool buttons); it slides in when the cursor reaches the edge. */
   autoHideAddressBar: boolean
+  sounds: SoundSettings
+  /** Which installed mod each part of the look and sound comes from; null keeps Lumo's own. Parts can come from different mods. */
+  mods: ModSelection
+  /**
+   * Read-only, filled in by the main process: `theme` is then the mod's colors, not the user's own,
+   * so the color pickers must not write it back.
+   */
+  themeFromMod?: boolean
 }
 
 export interface AlertDialogPayload {
@@ -270,3 +310,59 @@ export interface EdgeState {
   open: boolean
   position: 'top' | 'bottom'
 }
+
+/** Sounds the UI plays. The `key-*` kinds also arrive from pages, where only the kind (never the key) is sent. */
+export type SoundEvent =
+  | 'tab-open'
+  | 'tab-close'
+  | 'key-letter'
+  | 'key-space'
+  | 'key-enter'
+  | 'key-backspace'
+
+export const KEY_SOUND_EVENTS: readonly SoundEvent[] = ['key-letter', 'key-space', 'key-enter', 'key-backspace']
+
+/** An installed mod (Opera GX's mod manifest format), as listed in the settings. */
+export interface ModInfo {
+  id: string
+  name: string
+  author: string | null
+  description: string | null
+  version: string | null
+  /** lumo-mod:// URL of the mod's icon. */
+  icon: string | null
+  hasMusic: boolean
+  hasKeyboard: boolean
+  hasTabSounds: boolean
+  hasTheme: boolean
+  hasWallpaper: boolean
+}
+
+/** A mod's wallpaper for the new tab page (an image, or a looping muted video with a still `poster`). */
+export interface ModWallpaper {
+  url: string
+  video: boolean
+  poster: string | null
+  textColor: string | null
+  textShadow: string | null
+}
+
+/** The audio files of a mod, as lumo-mod:// URLs; lists play in order. */
+export interface ModSounds {
+  music: string[]
+  events: Partial<Record<SoundEvent, string[]>>
+}
+
+export interface ModInstallResult {
+  ok: boolean
+  mod?: ModInfo
+  error?: string
+  /** The user closed the file picker. */
+  cancelled?: boolean
+}
+
+export const MOD_SCHEME = 'lumo-mod'
+
+export const GX_STORE_URL = 'https://store.gx.me/mods/'
+/** The page of one mod on the GX Store (not the list): /<lang>/mods/<id>/<slug>/. */
+export const GX_STORE_MOD_PAGE = /^https:\/\/store\.gx\.me\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?mods\/[a-z0-9]+\/[^/?#]+/i

@@ -1,18 +1,19 @@
 import { useRef, useState } from 'react'
-import type { Bookmark } from '@shared/ipc'
+import type { Bookmark, ModWallpaper } from '@shared/ipc'
 import FaviconImg from './FaviconImg'
 import { useSuggestions } from '../lib/useSuggestions'
 
 interface Props {
   bookmarks: Bookmark[]
   totalMemoryMB: number | null
+  wallpaper: ModWallpaper | null
   onNavigate: (input: string) => void
   onOpenNewTab: (url: string) => void
 }
 
 type DragZone = 'before' | 'after'
 
-export default function NewTabPage({ bookmarks, totalMemoryMB, onNavigate, onOpenNewTab }: Props): JSX.Element {
+export default function NewTabPage({ bookmarks, totalMemoryMB, wallpaper, onNavigate, onOpenNewTab }: Props): JSX.Element {
   const [value, setValue] = useState('')
   const [dragOver, setDragOver] = useState<{ id: string; zone: DragZone } | null>(null)
   const [focused, setFocused] = useState(false)
@@ -30,7 +31,21 @@ export default function NewTabPage({ bookmarks, totalMemoryMB, onNavigate, onOpe
   const visible = bookmarks.slice(0, 8)
 
   return (
-    <div className="new-tab">
+    <div className={`new-tab ${wallpaper ? 'new-tab--wallpaper' : ''}`}>
+      {wallpaper &&
+        (wallpaper.video ? (
+          <video
+            className="new-tab__wallpaper"
+            src={wallpaper.url}
+            poster={wallpaper.poster ?? undefined}
+            autoPlay
+            loop
+            muted
+            playsInline
+          />
+        ) : (
+          <img className="new-tab__wallpaper" src={wallpaper.url} alt="" />
+        ))}
       <div className="new-tab__glow" />
       <div className="new-tab__logo">Lumo</div>
 

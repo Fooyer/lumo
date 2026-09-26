@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Download, Folder, ExternalLink, X, Trash2 } from 'lucide-react'
 import type { DownloadItem } from '@shared/ipc'
-import { lighten } from '../lib/color'
+import { useTheme } from '../lib/useTheme'
 import { downloadEta } from '../lib/downloadEta'
 
 const PAGE_SIZE = 25
@@ -13,6 +13,8 @@ function formatBytes(bytes: number): string {
 }
 
 export default function DownloadsFlyout(): JSX.Element {
+  // Follows the theme live: this panel stays alive between openings, so it must hear about changes.
+  useTheme()
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [isLoaded, setIsLoaded] = useState(false)
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
@@ -23,14 +25,6 @@ export default function DownloadsFlyout(): JSX.Element {
     void window.lumo.listDownloads().then((items) => {
       setDownloads(items)
       setIsLoaded(true)
-    })
-    void window.lumo.getSettings().then((s) => {
-      const root = document.documentElement
-      root.style.setProperty('--accent', s.theme.accent)
-      root.style.setProperty('--danger', s.theme.danger)
-      root.style.setProperty('--bg', s.theme.bg)
-      root.style.setProperty('--bg-elevated', lighten(s.theme.bg, 0.05))
-      root.style.setProperty('--border', lighten(s.theme.bg, 0.14))
     })
     // Subscribe to live updates
     const unsubscribe = window.lumo.onDownloadsUpdated((items) => {

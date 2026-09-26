@@ -16,7 +16,20 @@ const DEFAULTS: Settings = {
   sidebarCollapsed: false,
   restoreSession: true,
   autoUpdate: true,
-  autoHideAddressBar: false
+  autoHideAddressBar: false,
+  sounds: {
+    enabled: false,
+    volume: 60,
+    keyboard: true,
+    tabs: true,
+    music: false,
+    musicVolume: 40,
+    duckMusic: true,
+    musicSource: 'radio',
+    radioUrl: 'https://stream.laut.fm/lofi',
+    radioName: 'Lofi · laut.fm'
+  },
+  mods: { theme: null, wallpaper: null, keyboard: null, tabs: null, music: null }
 }
 
 export class SettingsStore {
@@ -29,7 +42,29 @@ export class SettingsStore {
   private load(): Settings {
     try {
       const raw = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'))
-      return { ...DEFAULTS, ...raw, theme: { ...DEFAULTS.theme, ...(raw.theme ?? {}) } }
+      // Earlier versions had a single active mod (plus two on/off switches); it becomes a choice per part.
+      const legacyId: string | null = raw.sounds?.modId ?? null
+      const mods =
+        raw.mods ??
+        (legacyId
+          ? {
+              theme: raw.modTheme === false ? null : legacyId,
+              wallpaper: raw.modWallpaper === false ? null : legacyId,
+              keyboard: legacyId,
+              tabs: legacyId,
+              music: legacyId
+            }
+          : {})
+      delete raw.modTheme
+      delete raw.modWallpaper
+      delete raw.sounds?.modId
+      return {
+        ...DEFAULTS,
+        ...raw,
+        theme: { ...DEFAULTS.theme, ...(raw.theme ?? {}) },
+        sounds: { ...DEFAULTS.sounds, ...(raw.sounds ?? {}) },
+        mods: { ...DEFAULTS.mods, ...mods }
+      }
     } catch {
       return { ...DEFAULTS }
     }
@@ -48,10 +83,13 @@ export class SettingsStore {
   }
 
   set(partial: Partial<Settings>): Settings {
+    delete partial.themeFromMod
     this.data = {
       ...this.data,
       ...partial,
-      theme: { ...this.data.theme, ...(partial.theme ?? {}) }
+      theme: { ...this.data.theme, ...(partial.theme ?? {}) },
+      sounds: { ...this.data.sounds, ...(partial.sounds ?? {}) },
+      mods: { ...this.data.mods, ...(partial.mods ?? {}) }
     }
     this.save()
     return this.data

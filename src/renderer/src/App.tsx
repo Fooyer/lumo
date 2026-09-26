@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { GX_STORE_MOD_PAGE } from '@shared/ipc'
 import type {
   TabSnapshot,
   MemorySnapshot,
@@ -9,7 +10,8 @@ import type {
   AlertDialogPayload,
   CertWarningPayload,
   AnchorBounds,
-  UpdateStatus
+  UpdateStatus,
+  ModWallpaper
 } from '@shared/ipc'
 import TabStrip from './components/TabStrip'
 import TabSidebar from './components/TabSidebar'
@@ -24,8 +26,10 @@ import DownloadsPage from './components/DownloadsPage'
 import AlertModal from './components/AlertModal'
 import CertWarningModal from './components/CertWarningModal'
 import ErrorBoundary from './components/ErrorBoundary'
-import { lighten } from './lib/color'
+import { applyTheme } from './lib/useTheme'
 import { isInteractiveTarget } from './lib/interactive'
+import { useSounds } from './lib/useSounds'
+import { adoptWholeMod } from './lib/mods'
 
 const DEFAULT_SETTINGS: Settings = {
   memorySaverEnabled: true,
@@ -38,7 +42,20 @@ const DEFAULT_SETTINGS: Settings = {
   sidebarCollapsed: false,
   restoreSession: true,
   autoUpdate: true,
-  autoHideAddressBar: false
+  autoHideAddressBar: false,
+  sounds: {
+    enabled: false,
+    volume: 60,
+    keyboard: true,
+    tabs: true,
+    music: false,
+    musicVolume: 40,
+    duckMusic: true,
+    musicSource: 'radio',
+    radioUrl: '',
+    radioName: ''
+  },
+  mods: { theme: null, wallpaper: null, keyboard: null, tabs: null, music: null }
 }
 
 export default function App(): JSX.Element {
@@ -53,6 +70,13 @@ export default function App(): JSX.Element {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([])
   const [downloads, setDownloads] = useState<DownloadItem[]>([])
   const [toolbarHidden, setToolbarHidden] = useState(false)
+  const [wallpaper, setWallpaper] = useState<ModWallpaper | null>(null)
+  const [storeInstall, setStoreInstall] = useState<{ busy: boolean; message: string | null; error: boolean; url: string | null }>({
+    busy: false,
+    message: null,
+    error: false,
+    url: null
+  })
   const [update, setUpdate] = useState<UpdateStatus | null>(null)
   const [updateDismissed, setUpdateDismissed] = useState(false)
   const [alertQueue, setAlertQueue] = useState<AlertDialogPayload[]>([])
@@ -95,13 +119,25 @@ export default function App(): JSX.Element {
     }
   }, [])
 
+  useSounds(settings.sounds, settings.mods)
+
   useEffect(() => {
-    const root = document.documentElement
-    root.style.setProperty('--accent', settings.theme.accent)
-    root.style.setProperty('--danger', settings.theme.danger)
-    root.style.setProperty('--bg', settings.theme.bg)
-    root.style.setProperty('--bg-elevated', lighten(settings.theme.bg, 0.05))
-    root.style.setProperty('--border', lighten(settings.theme.bg, 0.14))
+    const id = settings.mods.wallpaper
+    if (!id) {
+      setWallpaper(null)
+      return
+    }
+    let stale = false
+    void window.lumo.getModWallpaper(id).then((w) => {
+      if (!stale) setWallpaper(w)
+    })
+    return () => {
+      stale = true
+    }
+  }, [settings.mods.wallpaper])
+
+  useEffect(() => {
+    applyTheme(settings.theme)
   }, [settings.theme])
 
   // The page views are native and sit on top of the UI, so the main process needs the exact area
@@ -171,6 +207,35 @@ export default function App(): JSX.Element {
       off()
     }
   }, [openInternal])
+
+  // A GX Store mod page in the active tab offers to install that mod into Lumo.
+  const storeModTab = activeTab && GX_STORE_MOD_PAGE.test(activeTab.url) ? activeTab : null
+  const storeModUrl = storeModTab?.url ?? null
+  useEffect(() => {
+    setStoreInstall({ busy: false, message: null, error: false, url: null })
+  }, [storeModUrl])
+
+  const installStoreMod = useCallback(async (tabId: string, url: string) => {
+    setStoreInstall({ busy: true, message: null, error: false, url })
+    try {
+      const result = await window.lumo.installStoreMod(tabId)
+      if (result.ok && result.mod) {
+        const mod = result.mod
+        // The mod just installed is the one the user wants to try: use everything it has (the parts can be
+        // told apart, or mixed with other mods', in Personalização).
+        void window.lumo.getSettings().then((current) =>
+          window.lumo
+            .setSettings({ ...adoptWholeMod(mod, current.mods), sounds: { ...current.sounds, enabled: true } })
+            .then(setSettingsState)
+        )
+        setStoreInstall({ busy: false, message: `"${result.mod.name}" instalado e ativado.`, error: false, url })
+      } else {
+        setStoreInstall({ busy: false, message: result.error ?? 'Não foi possível instalar o mod.', error: true, url })
+      }
+    } catch {
+      setStoreInstall({ busy: false, message: 'Não foi possível instalar o mod.', error: true, url })
+    }
+  }, [])
 
   const updateSettings = useCallback((partial: Partial<Settings>) => {
     void window.lumo.setSettings(partial).then(setSettingsState)
@@ -300,6 +365,23 @@ export default function App(): JSX.Element {
             </div>
           </div>
         )}
+        {storeModTab && (
+          <div className="ai-answer update-banner">
+            <span className={storeInstall.error && storeInstall.url === storeModTab.url ? 'update-banner__error' : undefined}>
+              {(storeInstall.url === storeModTab.url && storeInstall.message) ||
+                'Este mod pode ser instalado no Lumo (sons, cores e papel de parede).'}
+            </span>
+            <div className="update-banner__actions">
+              <button
+                className="update-banner__install"
+                disabled={storeInstall.busy && storeInstall.url === storeModTab.url}
+                onClick={() => void installStoreMod(storeModTab.id, storeModTab.url)}
+              >
+                {storeInstall.busy && storeInstall.url === storeModTab.url ? 'Instalando…' : 'Instalar no Lumo'}
+              </button>
+            </div>
+          </div>
+        )}
         {aiAnswer && (
           <div className="ai-answer">
             <span>{aiAnswer}</span>
@@ -320,7 +402,7 @@ export default function App(): JSX.Element {
         >
           <ErrorBoundary>
             {activeTab?.url === 'lumo://settings' && (
-              <SettingsPage settings={settings} onChange={updateSettings} memory={memory} tabs={tabs} />
+              <SettingsPage settings={settings} onChange={updateSettings} />
             )}
             {activeTab?.url === 'lumo://history' && (
               <HistoryPage
@@ -333,6 +415,7 @@ export default function App(): JSX.Element {
               <NewTabPage
                 bookmarks={bookmarks}
                 totalMemoryMB={memory?.totalMB ?? null}
+                wallpaper={wallpaper}
                 onNavigate={navigate}
                 onOpenNewTab={(url) => void window.lumo.createTab(url, false)}
               />

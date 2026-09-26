@@ -31,6 +31,12 @@ export class SuggestionsFlyout {
     parent.on('close', () => this.destroy())
   }
 
+  /** Sends something to the list's window (it is its own renderer, so it doesn't get the main window's broadcasts). */
+  send(channel: string, payload: unknown): void {
+    const wc = this.win?.webContents
+    if (wc && !wc.isDestroyed()) wc.send(channel, payload)
+  }
+
   private createWindow(): void {
     const win = new BrowserWindow({
       parent: this.parent,

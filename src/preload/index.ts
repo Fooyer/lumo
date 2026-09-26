@@ -18,7 +18,12 @@ import {
   type SuggestionPickedEvent,
   type SuggestionHoverEvent,
   type AnchorBounds,
-  type EdgeState
+  type EdgeState,
+  type SoundEvent,
+  type ModInfo,
+  type ModSounds,
+  type ModInstallResult,
+  type ModWallpaper
 } from '../shared/ipc'
 
 const api = {
@@ -235,6 +240,23 @@ const api = {
     ipcRenderer.on(IPC.certWarningShow, listener)
     return () => ipcRenderer.removeListener(IPC.certWarningShow, listener)
   },
+  onSound: (cb: (event: SoundEvent) => void) => {
+    const listener = (_e: unknown, event: SoundEvent): void => cb(event)
+    ipcRenderer.on(IPC.soundPlay, listener)
+    return () => ipcRenderer.removeListener(IPC.soundPlay, listener)
+  },
+  onMusicDuck: (cb: (audible: boolean) => void) => {
+    const listener = (_e: unknown, audible: boolean): void => cb(audible)
+    ipcRenderer.on(IPC.soundDuck, listener)
+    return () => ipcRenderer.removeListener(IPC.soundDuck, listener)
+  },
+  getModWallpaper: (id: string): Promise<ModWallpaper | null> => ipcRenderer.invoke(IPC.modsWallpaper, id),
+  openModStore: (): void => ipcRenderer.send(IPC.modsOpenStore),
+  installStoreMod: (tabId: string): Promise<ModInstallResult> => ipcRenderer.invoke(IPC.modsInstallStore, tabId),
+  listMods: (): Promise<ModInfo[]> => ipcRenderer.invoke(IPC.modsList),
+  getModSounds: (id: string): Promise<ModSounds | null> => ipcRenderer.invoke(IPC.modsSounds, id),
+  installMod: (kind: 'file' | 'folder'): Promise<ModInstallResult> => ipcRenderer.invoke(IPC.modsInstall, kind),
+  removeMod: (id: string): Promise<void> => ipcRenderer.invoke(IPC.modsRemove, id),
   respondCertWarning: (id: string, proceed: boolean): void =>
     ipcRenderer.send(IPC.certWarningRespond, id, proceed)
 }
