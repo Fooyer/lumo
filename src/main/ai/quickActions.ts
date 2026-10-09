@@ -46,7 +46,7 @@ const SITES: Record<string, { url: string; name: string }> = {
 const DOMAIN = /^(?:https?:\/\/)?([a-z0-9-]+(?:\.[a-z0-9-]+)+)(\/\S*)?$/i
 
 const OPEN =
-  /^(?:(?:por favor|pf|pfv)[,\s]+)?(?:(?:pode|consegue|poderia|queria que (?:voce|vc)|quero que (?:voce|vc))\s+)?(?:(?:me|nos)\s+)?(?:abr(?:a|e|ir|indo)|acess(?:a|e|ar)|va para|vai (?:para|pra|pro)|entra(?:r)? (?:no|na|em)|carrega(?:r)?|abre ai)\s+(?:o |a |um |uma |no |na )?(?:site |pagina |aplicativo |app )?(?:do |da |de )?(.+?)(?:\s+(?:em|numa?|na|no)\s+(?:uma?\s+)?(?:nova\s+)?(?:aba|guia)(?:\s+nova)?)?(?:\s+(?:para|pra) mim|\s+por favor|\s+pf|\s+ai)?[.!?\s]*$/
+  /^(?:(?:por favor|pf|pfv)[,\s]+)?(?:(?:pode|consegue|poderia|queria que (?:voce|vc)|quero que (?:voce|vc))\s+)?(?:(?:me|nos)\s+)?(?:abr(?:a|e|ir|indo)|acess(?:a|e|ar)|va para|vai (?:para|pra|pro)|entra(?:r)? (?:no|na|em)|carrega(?:r)?|abre ai)\s+(?:o |a |um |uma |no |na )?(?:site |pagina |aplicativo |app )?(?:do |da |de )?(.+?)(?:\s+(?:em|numa?|na|no)\s+(?:uma?\s+)?(?:nova\s+|outra\s+)?(?:aba|guia)(?:\s+nova)?)?(?:\s+(?:para|pra) mim|\s+por favor|\s+pf|\s+ai)?[.!?\s]*$/
 
 function plain(text: string): string {
   return text
@@ -57,14 +57,29 @@ function plain(text: string): string {
     .trim()
 }
 
-/** The address a plain "open X" request points at, or null when it needs the model to make sense of it. */
-export function parseOpenCommand(text: string): { url: string; name: string } | null {
+/** Things that are not a site to look for: parts of the browser, or a reference to something said before. */
+const NOT_A_SITE =
+  /\b(aba|abas|guia|guias|janela|configuracao|configuracoes|historico|downloads?|favoritos|marcadores|menu|ferramentas?|pagina inicial|nova)\b|^(ele|ela|eles|elas|isso|isto|aquilo|esse|essa|este|esta|aquele|aquela|meu|minha|outro|outra|mais|algo|alguma|qualquer)\b/
+
+/** What a plain "open X" request wants opened (the name or address as said), or null when the model has to make sense of it. */
+export function openTarget(text: string): string | null {
   const t = plain(text)
   if (t.length > 90) return null
   const m = OPEN.exec(t)
   if (!m) return null
   const target = m[1].replace(/^["'`]+|["'`]+$/g, '').trim()
-  if (!target) return null
+  if (!target || target.split(' ').length > 5) return null
+  if (NOT_A_SITE.test(target) && !DOMAIN.test(target)) return null
+  return target
+}
+
+/** The target is an address the person typed (youtube.com, github.com/x), not a name to look up. */
+export function isAddress(target: string): boolean {
+  return DOMAIN.test(target)
+}
+
+/** A well-known site by name, or the address itself. */
+export function knownSite(target: string): { url: string; name: string } | null {
   const known = SITES[target] ?? SITES[target.replace(/\s+/g, '')]
   if (known) return known
   const d = DOMAIN.exec(target)

@@ -3,6 +3,7 @@ import type { Settings, TabLayout } from '../../shared/ipc'
 import { GESTURES, MOODS, PERSONAS, type PersonaId, type Autonomy, type Gesture, type MascotCommand, type Mood, type ToolAnim } from '../../shared/ai'
 import { isInternalUrl, normalizeUrlOrNull, searchUrl, domainOf, type Tab, type TabManager } from '../tabManager'
 import { isSearchPage } from './quickActions'
+import { describeChoices, lookup } from './siteLookup'
 import type { BookmarksManager } from '../bookmarksManager'
 import type { HistoryManager } from '../historyManager'
 import type { DownloadsManager } from '../downloadsManager'
@@ -33,6 +34,8 @@ export interface ToolBridge {
   mascotCommand(cmd: MascotCommand): void
   /** Where a part of the browser's own interface is (the address bar, the tabs…), in pixels of the page area. */
   uiRect(target: string): Promise<{ x: number; y: number; w: number; h: number } | null>
+  /** Holds out options for the user to pick (the mascot shows them in her hands). */
+  offerChoice(options: import('./siteLookup').Candidate[]): void
   /** Asks the user (in the chat) and resolves with the answer. */
   confirm(title: string, detail: string): Promise<boolean>
 }
@@ -270,6 +273,26 @@ export class AiTools {
           const tab = b.tabs.list().find((t) => t.id === id)
           if (tab?.view && !background) await settle(tab.view.webContents)
           return `Aba aberta (id=${id}) pedindo ${target}.${this.landed(id)}`
+        }
+      },
+      {
+        spec: {
+          name: 'find_site',
+          description:
+            "Looks for a site or page by NAME in the user's favorites first, then in the browsing history. Use it BEFORE searching the web whenever the user asks to open something by name (\"abre o site de receitas\", \"abre aquele fórum\"). Returns the address to open with open_tab, or the options when several have that name (then ask the user which one), or says nothing was found (only then search the web with open_tab and a query).",
+          parameters: { type: 'object', properties: { name: { type: 'string', description: 'What the user called it.' } }, required: ['name'] }
+        },
+        anim: 'bookmark',
+        risk: 'safe',
+        label: () => 'Procurando nos favoritos e no histórico…',
+        run: async (a) => {
+          const name = str(a.name)
+          if (!name) throw new ToolError('Faltou o nome.')
+          const found = lookup(name, { bookmarks: b.bookmarks.list(), history: (q, n) => b.history.list(q, n) })
+          if (found.kind === 'one') return `Achei nos ${found.candidate.source}: "${found.candidate.title}" → ${found.candidate.url}. Abra com open_tab.`
+          if (found.kind === 'several') b.offerChoice(found.candidates)
+          if (found.kind === 'several') return `${describeChoices(name, found)}\n(Pergunte à pessoa qual ela quer; não escolha por ela.)`
+          return `Nada com esse nome nos favoritos nem no histórico. Agora sim: pesquise na web com open_tab (query).`
         }
       },
       {

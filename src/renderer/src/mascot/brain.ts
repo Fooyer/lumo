@@ -88,6 +88,7 @@ export class Brain {
   private flyReturn = false
   private pointTo: { x: number; y: number } | null = null
   private pointGuard = false
+  private offering = false
   private fvx = 0
   private fvy = 0
   private trailT = 0
@@ -383,6 +384,15 @@ export class Brain {
     if (guard) this.setMood('angry', holdMs + 1200)
   }
 
+  /** She holds both hands out, each with something to choose from. */
+  setOffering(on: boolean): void {
+    this.offering = on
+    if (on) {
+      this.touch()
+      this.setMood('thinking', 120_000)
+    } else if (this.mood === 'thinking' && this.activity === null) this.setMood('neutral')
+  }
+
   goHome(): void {
     this.flyTo(this.homeX, this.homeY, 0, false)
   }
@@ -601,6 +611,7 @@ export class Brain {
     this.poseMotion(p)
     this.poseActivity(p)
     this.posePoint(p)
+    this.poseOffer(p)
     this.poseTalk(p)
     this.poseEyes(p)
     this.poseHair(p)
@@ -904,6 +915,20 @@ export class Brain {
     p.scarf = clamp(-this.fvx * 0.03, -36, 36) + sin(t * 2.4) * 5
     p.lookX = clamp(this.fvx * 0.002, -0.8, 0.8)
     if (this.mood === 'neutral' && k > 0.5) p.mO = 0.35
+  }
+
+  private poseOffer(p: Targets): void {
+    if (!this.offering) return
+    const t = this.t
+    p.armLSh = 72 + sin(t * 2.2) * 3
+    p.armRSh = 72 - sin(t * 2.2) * 3
+    p.armLEl = 28
+    p.armREl = 28
+    p.headRot = sin(t * 1.4) * 4
+    p.lookX = sin(t * 0.9) * 0.6
+    p.lookY = 0.1
+    p.mSmile = 0.45
+    p.mFlat = 0
   }
 
   /** Pointing: the arm on that side stretches straight toward the target, and she looks at it. */

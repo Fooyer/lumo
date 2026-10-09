@@ -887,6 +887,7 @@ function createWindow(): void {
   ipcMain.handle(IPC.aiTest, () => aiAgent.test())
   ipcMain.handle(IPC.aiModels, () => aiAgent.models())
   ipcMain.handle(IPC.aiNotes, () => aiStore.notes())
+  ipcMain.handle(IPC.aiChoose, (_e, index: unknown) => (typeof index === 'number' ? aiAgent.chooseOption(index) : undefined))
   ipcMain.handle(IPC.aiBlockedSites, () => aiStore.blockedSites())
   ipcMain.handle(IPC.aiUnblockSite, (_e, host: unknown) => {
     if (typeof host === 'string') aiStore.unblockSite(host)

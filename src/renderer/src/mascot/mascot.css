@@ -975,3 +975,84 @@ body.mascot-chat-window #root {
     box-shadow: 0 0 0 7px transparent;
   }
 }
+
+/* The options she holds out, one in each hand, when several sites have the same name */
+.lm-offer {
+  position: absolute;
+  width: 74px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 6px 7px;
+  box-sizing: border-box;
+  border-radius: 14px;
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.18));
+  background: var(--bg-elevated, #1d1f2b);
+  color: var(--text, #eef0f6);
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.32);
+  animation: lm-offer-in 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  transition: transform 0.15s, border-color 0.15s;
+}
+
+.lm-offer--right {
+  animation-delay: 0.08s;
+}
+
+.lm-offer:hover {
+  transform: translateY(-3px) scale(1.05);
+  border-color: var(--accent, #2e6bff);
+}
+
+.lm-offer__icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent, #2e6bff) 22%, transparent);
+  overflow: hidden;
+}
+
+.lm-offer__icon img {
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.lm-offer__icon b {
+  font-size: 17px;
+}
+
+.lm-offer__name {
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.15;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lm-offer__host {
+  font-size: 9px;
+  color: var(--text-dim, #a4a8bb);
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@keyframes lm-offer-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.7);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

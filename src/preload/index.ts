@@ -365,6 +365,7 @@ const api = {
   aiTest: (): Promise<AiTestResult> => ipcRenderer.invoke(IPC.aiTest),
   aiModels: (): Promise<AiModelsResult> => ipcRenderer.invoke(IPC.aiModels),
   aiNotes: (): Promise<AiNote[]> => ipcRenderer.invoke(IPC.aiNotes),
+  aiChoose: (index: number): Promise<void> => ipcRenderer.invoke(IPC.aiChoose, index),
   aiWakeCheck: (wavBase64: string): Promise<WakeResult> => ipcRenderer.invoke(IPC.aiWakeCheck, wavBase64),
   aiWakePrepare: (): Promise<WakeStatus> => ipcRenderer.invoke(IPC.aiWakePrepare),
   aiWakeStatus: (): Promise<WakeStatus> => ipcRenderer.invoke(IPC.aiWakeStatus),

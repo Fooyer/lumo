@@ -304,7 +304,15 @@ export interface AiNote {
 /** What the mascot should look like she is doing while a tool runs. */
 export type ToolAnim = 'search' | 'read' | 'type' | 'click' | 'tabs' | 'settings' | 'think' | 'bookmark' | 'fly'
 
+/** One of the options she holds out when several sites answer to the same name. */
+export interface OfferOption {
+  title: string
+  host: string
+  favicon: string | null
+}
+
 export type AiEvent =
+  | { type: 'offer'; options: OfferOption[] | null }
   | { type: 'busy'; busy: boolean }
   | { type: 'tool-start'; id: string; name: string; label: string; anim: ToolAnim }
   | { type: 'tool-end'; id: string; ok: boolean; summary: string }

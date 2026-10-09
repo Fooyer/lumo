@@ -12,7 +12,8 @@ import type { AiStore } from './aiStore'
 import { buildSystemPrompt } from './persona'
 import { callLlm, listModels, LlmError, type LlmMessage } from './providers'
 import { remarkSystemPrompt } from './remarks'
-import { claimsAction, parseOpenCommand, promisesMore } from './quickActions'
+import { claimsAction, isAddress, knownSite, openTarget, promisesMore } from './quickActions'
+import { describeChoices, isDismissal, lookup, pickChoice, toOffer, type Candidate } from './siteLookup'
 import { AiTools, settingsSummary, type ToolBridge } from './tools'
 import type { Settings } from '../../shared/ipc'
 
@@ -37,13 +38,49 @@ export class AiAgent {
   private busy = false
   private abort: AbortController | null = null
   private pending = new Map<string, PendingConfirm>()
+  /** The options she offered when several things had the same name, until the person picks one. */
+  private choice: { options: Candidate[]; until: number } | null = null
   private emit: (event: AiEvent) => void = () => {}
 
   constructor(
-    private bridge: Omit<ToolBridge, 'confirm'>,
+    private bridge: Omit<ToolBridge, 'confirm' | 'offerChoice'>,
     private store: AiStore
   ) {
-    this.tools = new AiTools({ ...bridge, confirm: (title, detail) => this.askConfirm(title, detail) })
+    this.tools = new AiTools({ ...bridge, confirm: (title, detail) => this.askConfirm(title, detail), offerChoice: (o) => this.offerChoice(o) })
+  }
+
+  /** Holds out the options (the mascot shows them in her hands) until one is picked, by hand or by words. */
+  offerChoice(options: Candidate[]): void {
+    this.choice = { options, until: Date.now() + 120_000 }
+    this.emit({ type: 'offer', options: toOffer(options.slice(0, 2)) })
+  }
+
+  private clearChoice(): void {
+    if (!this.choice) return
+    this.choice = null
+    this.emit({ type: 'offer', options: null })
+  }
+
+  /** The person tapped one of the options in her hands. */
+  async chooseOption(index: number): Promise<void> {
+    const pending = this.choice
+    const picked = pending && Date.now() < pending.until ? pending.options[index] : null
+    this.clearChoice()
+    if (!picked || this.busy) return
+    const girl = this.config().persona === 'girl'
+    const call = { id: randomUUID(), name: 'open_tab', args: { url: picked.url } as Record<string, unknown> }
+    const meta = this.tools.meta(call.name, call.args)
+    if (meta.label) this.emit({ type: 'tool-start', id: call.id, name: call.name, label: meta.label, anim: meta.anim })
+    const out = await this.tools.run(call.name, call.args, this.config().autonomy)
+    if (meta.label) this.emit({ type: 'tool-end', id: call.id, ok: out.ok, summary: out.ok ? 'ok' : out.content.slice(0, 120) })
+    const text = out.ok
+      ? girl
+        ? `[feliz] Pronto! Abri ${picked.title} numa aba nova.`
+        : `[neutra] Tá feito. ${picked.title} aberto numa aba nova.`
+      : `[triste] Não consegui abrir ${picked.title}. ${out.content.slice(0, 160)}`
+    const reply: AiChatMessage = { id: randomUUID(), role: 'assistant', text, at: Date.now() }
+    this.store.appendHistory(reply)
+    this.emit({ type: 'message', message: reply })
   }
 
   setEmitter(cb: (event: AiEvent) => void): void {
@@ -199,19 +236,48 @@ export class AiAgent {
       let pushes = 0
 
       // "abra o youtube": understood with plain rules, so it happens at once and for sure.
-      const quick = info.noTools ? null : parseOpenCommand(text)
-      if (quick) {
-        const call = { id: randomUUID(), name: 'open_tab', args: { url: quick.url } as Record<string, unknown> }
+      // Looked for in the favorites first, then in the history, and only then on the web.
+      const girl = cfg.persona === 'girl'
+      const openIt = async (args: Record<string, unknown>, name: string, how: string): Promise<string> => {
+        const call = { id: randomUUID(), name: 'open_tab', args }
         const meta = this.tools.meta(call.name, call.args)
         if (meta.label) this.emit({ type: 'tool-start', id: call.id, name: call.name, label: meta.label, anim: meta.anim })
         const out = await this.tools.run(call.name, call.args, cfg.autonomy)
         if (meta.label) this.emit({ type: 'tool-end', id: call.id, ok: out.ok, summary: out.ok ? 'ok' : out.content.slice(0, 120) })
-        const girl = cfg.persona === 'girl'
-        finalText = out.ok
-          ? girl
-            ? `[feliz] Pronto! Abri ${quick.name} numa aba nova pra você.`
-            : `[neutra] Tá feito. ${quick.name} aberto numa aba nova.`
-          : `[triste] Não consegui abrir ${quick.name}. ${out.content.slice(0, 160)}`
+        if (!out.ok) return `[triste] Não consegui abrir ${name}. ${out.content.slice(0, 160)}`
+        return girl ? `[feliz] Pronto! Abri ${name} numa aba nova${how}.` : `[neutra] Tá feito. ${name} aberto numa aba nova${how}.`
+      }
+
+      if (!info.noTools && this.choice) {
+        const pending = this.choice
+        this.clearChoice()
+        if (Date.now() < pending.until) {
+          const picked = pickChoice(text, pending.options)
+          if (picked) finalText = await openIt({ url: picked.url }, picked.title, ` (dos seus ${picked.source})`)
+          else if (isDismissal(text)) finalText = girl ? '[neutra] Tudo bem, não abri nada!' : '[neutra] Certo. Não abri nada.'
+        }
+      }
+
+      const target = !finalText && !info.noTools ? openTarget(text) : null
+      if (target) {
+        const sources = { bookmarks: this.bridge.bookmarks.list(), history: (q: string, n: number) => this.bridge.history.list(q, n) }
+        const found = isAddress(target) ? ({ kind: 'none' } as const) : lookup(target, sources)
+        if (found.kind === 'one') {
+          finalText = await openIt({ url: found.candidate.url }, found.candidate.title, ` (achei nos seus ${found.candidate.source})`)
+        } else if (found.kind === 'several') {
+          this.offerChoice(found.candidates)
+          finalText = `[pensando] ${describeChoices(target, found)}`
+        } else {
+          const web = knownSite(target)
+          if (web) finalText = await openIt({ url: web.url }, web.name, '')
+          else {
+            finalText = await openIt({ query: target }, `a busca por "${target}"`, '')
+            if (!finalText.startsWith('[triste]'))
+              finalText = girl
+                ? `[neutra] Não achei "${target}" nos favoritos nem no histórico, então pesquisei na web pra você. Abri os resultados numa aba nova.`
+                : `[neutra] Não achei "${target}" nos favoritos nem no histórico. Pesquisei na web; os resultados estão numa aba nova.`
+          }
+        }
       }
 
       for (let step = 0; !finalText && step < MAX_STEPS; step++) {

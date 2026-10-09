@@ -123,6 +123,7 @@ export const IPC = {
   aiTest: 'ai:test',
   aiModels: 'ai:models',
   aiNotes: 'ai:notes',
+  aiChoose: 'ai:choose',
   aiWakeCheck: 'ai:wake-check',
   aiWakePrepare: 'ai:wake-prepare',
   aiWakeStatus: 'ai:wake-status',

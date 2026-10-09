@@ -7,6 +7,7 @@ import {
   type AssistantSettings,
   type MascotBrowserEvent,
   type MascotCommand,
+  type OfferOption,
   type PersonaId,
   type VoiceState
 } from '@shared/ai'
@@ -23,6 +24,8 @@ const FX_TOP = 52
 const BUBBLE_W = 244
 const BUBBLE_GAP = 8
 const CLICK_DELAY_MS = 260
+/** Room on each side of her for the two options she holds out. */
+const OFFER_PAD = 84
 const DRAG_THRESHOLD = 5
 /** After this many rounds without anyone speaking, the hands-free mode switches itself off. */
 const MAX_EMPTY_ROUNDS = 3
@@ -66,6 +69,8 @@ export default function Mascot(): JSX.Element {
   const bubbleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const [bubble, setBubble] = useState<Bubble | null>(null)
+  const [offer, setOffer] = useState<OfferOption[] | null>(null)
+  const offerRef = useRef(false)
   const [fx, setFx] = useState<Fx[]>([])
   const [scale, setScale] = useState(1)
   const [persona, setPersona] = useState<PersonaId>('girl')
@@ -334,7 +339,8 @@ export default function Mascot(): JSX.Element {
         const svgH = SVG_H * k
         const bubbleEl = bubbleRef.current
         const bw = bubbleActiveRef.current && bubbleEl ? BUBBLE_W : 0
-        const w = Math.round(Math.max(svgW + 2 * FX_SIDE, bw + 16))
+        const pad = offerRef.current ? OFFER_PAD : 0
+        const w = Math.round(Math.max(svgW + 2 * FX_SIDE + 2 * pad, bw + 16))
         const bubbleH = bubbleActiveRef.current && bubbleEl ? bubbleEl.offsetHeight + BUBBLE_GAP : 0
         const h = Math.round(svgH + FX_TOP + bubbleH)
         const fy = brain.y + footDrop
@@ -477,6 +483,12 @@ export default function Mascot(): JSX.Element {
     const offAi = window.lumo.onAiEvent((event: AiEvent) => {
       const brain = brainRef.current
       if (!brain) return
+      if (event.type === 'offer') {
+        offerRef.current = !!event.options?.length
+        setOffer(event.options?.length ? event.options : null)
+        brain.setOffering(offerRef.current)
+        return
+      }
       if (event.type === 'busy') {
         brain.setActivity(event.busy ? 'think' : null)
         if (event.busy) {
@@ -713,6 +725,26 @@ export default function Mascot(): JSX.Element {
       >
         <MascotSvg key={persona} ref={svgRef} variant={persona} />
       </div>
+      {offer?.slice(0, 2).map((o, i) => (
+        <button
+          key={`${o.host}-${i}`}
+          className={`lm-offer lm-offer--${i === 0 ? 'left' : 'right'}`}
+          style={{ bottom: svgH * 0.4, [i === 0 ? 'right' : 'left']: `calc(50% + ${svgW * 0.5 - 8}px)` }}
+          title={`${o.title} (${o.host})`}
+          onClick={() => {
+            setOffer(null)
+            offerRef.current = false
+            brainRef.current?.setOffering(false)
+            void window.lumo.aiChoose(i)
+          }}
+        >
+          <span className="lm-offer__icon">
+            {o.favicon ? <img src={o.favicon} alt="" draggable={false} /> : <b>{(o.host[0] ?? '?').toUpperCase()}</b>}
+          </span>
+          <span className="lm-offer__name">{o.title.length > 14 ? `${o.title.slice(0, 13)}…` : o.title}</span>
+          <span className="lm-offer__host">{o.host.replace(/^www\./, '')}</span>
+        </button>
+      ))}
     </div>
   )
 }
