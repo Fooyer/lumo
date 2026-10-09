@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { Code2, Settings as SettingsIcon, VenetianMask } from 'lucide-react'
+import { Code2, Settings as SettingsIcon, Sparkles, VenetianMask } from 'lucide-react'
 import type { DownloadItem, AnchorBounds } from '@shared/ipc'
 import DownloadsButton from './DownloadsButton'
 
@@ -32,6 +32,9 @@ export default function ToolButtons({
 
   return (
     <>
+      <button className="nav-btn nav-btn--lumi" onClick={() => window.lumo.toggleAssistant()} title="Conversar com a Lumi (Ctrl+Shift+L)">
+        <Sparkles size={16} strokeWidth={2.2} />
+      </button>
       <button className="nav-btn nav-btn--private" onClick={onNewPrivateTab} title="Nova aba anônima (Ctrl+Shift+N)">
         <VenetianMask size={17} strokeWidth={2.2} />
       </button>

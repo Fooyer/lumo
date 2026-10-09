@@ -40,6 +40,13 @@ const DENIED_PERMISSIONS = new Set(['geolocation', 'notifications', 'midi', 'mid
 
 let configured = false
 
+let extraSetup: ((ses: Session) => void) | null = null
+
+/** Something else that has to be installed on the private session when it is created (the site blocker). */
+export function onPrivateSession(setup: (ses: Session) => void): void {
+  extraSetup = setup
+}
+
 /** The private session, set up on first use. `adjustHeaders` lets the app apply its own per-site header tweaks. */
 export function getPrivateSession(
   adjustHeaders: (url: string, headers: Record<string, string>) => Record<string, string>
@@ -76,6 +83,8 @@ export function getPrivateSession(
     for (const name of Object.keys(responseHeaders)) if (name.toLowerCase() === 'set-cookie') delete responseHeaders[name]
     callback({ responseHeaders })
   })
+
+  extraSetup?.(ses)
 
   ses.setPermissionRequestHandler((_wc, permission, callback) => callback(!DENIED_PERMISSIONS.has(permission)))
   ses.setPermissionCheckHandler((_wc, permission) => !DENIED_PERMISSIONS.has(permission))

@@ -1,3 +1,5 @@
+import type { AssistantSettings } from './ai'
+
 export const IPC = {
   tabsCreate: 'tabs:create',
   tabsCreatePrivate: 'tabs:create-private',
@@ -99,6 +101,39 @@ export const IPC = {
   modsWallpaper: 'mods:wallpaper',
   modsOpenStore: 'mods:open-store',
   modsInstallStore: 'mods:install-store',
+  mascotRect: 'mascot:rect',
+  mascotStage: 'mascot:stage',
+  mascotReady: 'mascot:ready',
+  mascotToggleChat: 'mascot:toggle-chat',
+  mascotCloseChat: 'mascot:close-chat',
+  mascotChatState: 'mascot:chat-state',
+  mascotContextMenu: 'mascot:context-menu',
+  mascotCommand: 'mascot:command',
+  mascotBrowserEvent: 'mascot:browser-event',
+  mascotGrab: 'mascot:grab',
+  aiSend: 'ai:send',
+  aiCancel: 'ai:cancel',
+  aiHistory: 'ai:history',
+  aiClear: 'ai:clear',
+  aiEvent: 'ai:event',
+  aiState: 'ai:state',
+  aiConfirmReply: 'ai:confirm-reply',
+  aiSetKey: 'ai:set-key',
+  aiKeyStatus: 'ai:key-status',
+  aiTest: 'ai:test',
+  aiModels: 'ai:models',
+  aiNotes: 'ai:notes',
+  aiBlockedSites: 'ai:blocked-sites',
+  aiUnblockSite: 'ai:unblock-site',
+  aiForgetNote: 'ai:forget-note',
+  aiVoiceSend: 'ai:voice-send',
+  aiTts: 'ai:tts',
+  aiTtsStream: 'ai:tts-stream',
+  aiTtsCancel: 'ai:tts-cancel',
+  aiTtsChunk: 'ai:tts-chunk',
+  voiceToggle: 'voice:toggle',
+  voiceState: 'voice:state',
+  voiceError: 'voice:error',
 } as const
 
 export interface TabSnapshot {
@@ -200,6 +235,8 @@ export interface Settings {
   /** The first-run tour was finished or skipped; turning it off shows the tour again. */
   onboarded: boolean
   sounds: SoundSettings
+  /** The mascot and the AI behind her (the API keys are never part of the settings). */
+  assistant: AssistantSettings
   /** Which installed mod each part of the look and sound comes from; null keeps Lumo's own. Parts can come from different mods. */
   mods: ModSelection
   /**

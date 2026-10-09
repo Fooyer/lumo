@@ -1,5 +1,6 @@
 import fs from 'fs'
 import type { Settings } from '../shared/ipc'
+import { DEFAULT_ASSISTANT, RETIRED_GEMINI_MODELS } from '../shared/ai'
 
 const DEFAULTS: Settings = {
   memorySaverEnabled: true,
@@ -30,7 +31,13 @@ const DEFAULTS: Settings = {
     radioUrl: 'https://stream.laut.fm/lofi',
     radioName: 'Lofi · laut.fm'
   },
+  assistant: { ...DEFAULT_ASSISTANT },
   mods: { theme: null, wallpaper: null, keyboard: null, tabs: null, music: null }
+}
+
+function migrateAssistant(a: Settings['assistant']): Settings['assistant'] {
+  if (a.provider === 'gemini' && RETIRED_GEMINI_MODELS.includes(a.model)) return { ...a, model: DEFAULT_ASSISTANT.model }
+  return a
 }
 
 export class SettingsStore {
@@ -66,6 +73,7 @@ export class SettingsStore {
         ...raw,
         theme: { ...DEFAULTS.theme, ...(raw.theme ?? {}) },
         sounds: { ...DEFAULTS.sounds, ...(raw.sounds ?? {}) },
+        assistant: migrateAssistant({ ...DEFAULTS.assistant, ...(raw.assistant ?? {}) }),
         mods: { ...DEFAULTS.mods, ...mods }
       }
     } catch {
@@ -92,6 +100,7 @@ export class SettingsStore {
       ...partial,
       theme: { ...this.data.theme, ...(partial.theme ?? {}) },
       sounds: { ...this.data.sounds, ...(partial.sounds ?? {}) },
+      assistant: { ...this.data.assistant, ...(partial.assistant ?? {}) },
       mods: { ...this.data.mods, ...(partial.mods ?? {}) }
     }
     this.save()

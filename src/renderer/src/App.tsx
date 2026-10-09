@@ -34,6 +34,7 @@ import { applyTheme } from './lib/useTheme'
 import { isInteractiveTarget } from './lib/interactive'
 import { useSounds } from './lib/useSounds'
 import { adoptWholeMod } from './lib/mods'
+import { DEFAULT_ASSISTANT } from '@shared/ai'
 
 const DEFAULT_SETTINGS: Settings = {
   memorySaverEnabled: true,
@@ -61,6 +62,7 @@ const DEFAULT_SETTINGS: Settings = {
     radioUrl: '',
     radioName: ''
   },
+  assistant: DEFAULT_ASSISTANT,
   mods: { theme: null, wallpaper: null, keyboard: null, tabs: null, music: null }
 }
 

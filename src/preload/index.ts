@@ -28,6 +28,25 @@ import {
   type ModInstallResult,
   type ModWallpaper
 } from '../shared/ipc'
+import type {
+  AiChatMessage,
+  AiEvent,
+  AiKeyStatus,
+  AiNote,
+  AiProviderId,
+  AiSendResult,
+  AiModelsResult,
+  BlockedSite,
+  AiTestResult,
+  TtsChunk,
+  TtsResult,
+  VoiceSendResult,
+  VoiceState,
+  MascotBrowserEvent,
+  MascotCommand,
+  MascotRect,
+  MascotStage
+} from '../shared/ai'
 
 const api = {
   createTab: (url?: string, activate = true): Promise<string> =>
@@ -294,7 +313,64 @@ const api = {
   installMod: (kind: 'file' | 'folder'): Promise<ModInstallResult> => ipcRenderer.invoke(IPC.modsInstall, kind),
   removeMod: (id: string): Promise<void> => ipcRenderer.invoke(IPC.modsRemove, id),
   respondCertWarning: (id: string, proceed: boolean): void =>
-    ipcRenderer.send(IPC.certWarningRespond, id, proceed)
+    ipcRenderer.send(IPC.certWarningRespond, id, proceed),
+
+  // Lumi, the mascot and her AI
+  toggleAssistant: (): void => ipcRenderer.send(IPC.mascotToggleChat),
+  closeAssistantChat: (): void => ipcRenderer.send(IPC.mascotCloseChat),
+  mascotReady: (): void => ipcRenderer.send(IPC.mascotReady),
+  setMascotRect: (rect: MascotRect): void => ipcRenderer.send(IPC.mascotRect, rect),
+  showMascotMenu: (): void => ipcRenderer.send(IPC.mascotContextMenu),
+  onMascotStage: (cb: (stage: MascotStage) => void) => {
+    const listener = (_e: unknown, stage: MascotStage): void => cb(stage)
+    ipcRenderer.on(IPC.mascotStage, listener)
+    return () => ipcRenderer.removeListener(IPC.mascotStage, listener)
+  },
+  onMascotChatState: (cb: (open: boolean) => void) => {
+    const listener = (_e: unknown, open: boolean): void => cb(open)
+    ipcRenderer.on(IPC.mascotChatState, listener)
+    return () => ipcRenderer.removeListener(IPC.mascotChatState, listener)
+  },
+  onMascotCommand: (cb: (command: MascotCommand) => void) => {
+    const listener = (_e: unknown, command: MascotCommand): void => cb(command)
+    ipcRenderer.on(IPC.mascotCommand, listener)
+    return () => ipcRenderer.removeListener(IPC.mascotCommand, listener)
+  },
+  onMascotBrowserEvent: (cb: (event: MascotBrowserEvent) => void) => {
+    const listener = (_e: unknown, event: MascotBrowserEvent): void => cb(event)
+    ipcRenderer.on(IPC.mascotBrowserEvent, listener)
+    return () => ipcRenderer.removeListener(IPC.mascotBrowserEvent, listener)
+  },
+  aiSend: (text: string): Promise<AiSendResult> => ipcRenderer.invoke(IPC.aiSend, text),
+  aiCancel: (): void => ipcRenderer.send(IPC.aiCancel),
+  aiVoiceSend: (wavBase64: string): Promise<VoiceSendResult> => ipcRenderer.invoke(IPC.aiVoiceSend, wavBase64),
+  aiTts: (text: string): Promise<TtsResult> => ipcRenderer.invoke(IPC.aiTts, text),
+  aiTtsStream: (id: string, text: string): Promise<void> => ipcRenderer.invoke(IPC.aiTtsStream, id, text),
+  aiTtsCancel: (id: string): void => ipcRenderer.send(IPC.aiTtsCancel, id),
+  onTtsChunk: (cb: (chunk: TtsChunk) => void) => {
+    const listener = (_e: unknown, chunk: TtsChunk): void => cb(chunk)
+    ipcRenderer.on(IPC.aiTtsChunk, listener)
+    return () => ipcRenderer.removeListener(IPC.aiTtsChunk, listener)
+  },
+  voiceToggle: (): void => ipcRenderer.send(IPC.voiceToggle),
+  reportVoiceState: (state: VoiceState): void => ipcRenderer.send(IPC.voiceState, state),
+  reportVoiceError: (message: string): void => ipcRenderer.send(IPC.voiceError, message),
+  aiHistory: (): Promise<{ messages: AiChatMessage[]; busy: boolean }> => ipcRenderer.invoke(IPC.aiHistory),
+  aiClear: (): Promise<void> => ipcRenderer.invoke(IPC.aiClear),
+  aiConfirmReply: (id: string, ok: boolean): void => ipcRenderer.send(IPC.aiConfirmReply, id, ok),
+  aiSetKey: (provider: AiProviderId, key: string): Promise<AiKeyStatus> => ipcRenderer.invoke(IPC.aiSetKey, provider, key),
+  aiKeyStatus: (): Promise<AiKeyStatus> => ipcRenderer.invoke(IPC.aiKeyStatus),
+  aiTest: (): Promise<AiTestResult> => ipcRenderer.invoke(IPC.aiTest),
+  aiModels: (): Promise<AiModelsResult> => ipcRenderer.invoke(IPC.aiModels),
+  aiNotes: (): Promise<AiNote[]> => ipcRenderer.invoke(IPC.aiNotes),
+  aiBlockedSites: (): Promise<BlockedSite[]> => ipcRenderer.invoke(IPC.aiBlockedSites),
+  aiUnblockSite: (host: string): Promise<BlockedSite[]> => ipcRenderer.invoke(IPC.aiUnblockSite, host),
+  aiForgetNote: (id: string): Promise<AiNote[]> => ipcRenderer.invoke(IPC.aiForgetNote, id),
+  onAiEvent: (cb: (event: AiEvent) => void) => {
+    const listener = (_e: unknown, event: AiEvent): void => cb(event)
+    ipcRenderer.on(IPC.aiEvent, listener)
+    return () => ipcRenderer.removeListener(IPC.aiEvent, listener)
+  }
 }
 
 contextBridge.exposeInMainWorld('lumo', api)

@@ -15,6 +15,7 @@ import {
   type SoundEvent,
   type ModInstallResult
 } from '../shared/ipc'
+import { AI_PROVIDERS, PERSONAS, type AiProviderId, type MascotRect, type MascotBrowserEvent, type TtsChunk, type VoiceState } from '../shared/ai'
 import { TabManager, buildEditContextItems, searchUrl, domainOf } from './tabManager'
 import { MemoryManager } from './memoryManager'
 import { SettingsStore } from './settingsStore'
@@ -28,8 +29,14 @@ import { OverlayPanel } from './overlayPanel'
 import { EdgeOverlay } from './edgeOverlay'
 import { SuggestionsFlyout } from './suggestionsFlyout'
 import { Updater } from './updater'
-import { getPrivateSession, wipePrivateSession } from './privateSession'
+import { getPrivateSession, onPrivateSession, wipePrivateSession } from './privateSession'
+import { blockedPageUrl, installSiteBlocker } from './ai/siteBlock'
+import { Remarker } from './ai/remarks'
 import { ModsManager } from './modsManager'
+import { MascotOverlay } from './mascotOverlay'
+import { AiStore } from './ai/aiStore'
+import { AiAgent } from './ai/agent'
+import { synthesize, synthesizeEdge, synthesizeStream, transcribe, warmEdge } from './ai/voice'
 
 const settingsStore = new SettingsStore(join(app.getPath('userData'), 'lumo-settings.json'))
 const bookmarksManager = new BookmarksManager(join(app.getPath('userData'), 'lumo-bookmarks.json'))
@@ -148,6 +155,20 @@ if (!settingsStore.get().hardwareAccelerationEnabled) {
   app.disableHardwareAcceleration()
 }
 
+/** The browser's own interface, as the assistant can point at it: name → selector in the main window. */
+const UI_TARGETS: Record<string, string> = {
+  address_bar: '.address-input',
+  tabs: '.tab-strip__tabs',
+  new_tab: '.tab-strip__new',
+  back: '.nav-btn--back',
+  forward: '.nav-btn--forward',
+  reload: '.nav-btn--reload',
+  bookmarks_bar: '.bookmarks-bar',
+  settings: '.gear-btn',
+  lumi_button: '.nav-btn--lumi',
+  private_tab: '.nav-btn--private'
+}
+
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1280,
@@ -189,6 +210,62 @@ function createWindow(): void {
     channels: { show: IPC.settingsFlyoutShow, close: IPC.settingsFlyoutClose, changed: IPC.settingsFlyoutChanged }
   })
   const suggestionsFlyout = new SuggestionsFlyout(mainWindow)
+
+  // Lumi, the mascot and assistant: two overlay views plus the AI brain that drives the browser.
+  const aiStore = new AiStore(join(app.getPath('userData'), 'lumo-ai.json'))
+  const mascot = new MascotOverlay(mainWindow, () => tabManager.getContentRect())
+  mascot.setEnabled(settingsStore.get().assistant.enabled)
+  // Sites the assistant blocked: refused on every session, replaced by her own page.
+  installSiteBlocker(session.defaultSession, (url) => aiStore.blockedEntry(url))
+  onPrivateSession((ses) => installSiteBlocker(ses, (url) => aiStore.blockedEntry(url)))
+  tabManager.setBlockedPage((url) => {
+    const entry = aiStore.blockedEntry(url)
+    return entry ? blockedPageUrl(entry, settingsStore.get().assistant.persona) : null
+  })
+  const aiAgent = new AiAgent(
+    {
+      tabs: tabManager,
+      getSettings: () => publicSettings(),
+      applySettings: (partial) => applySettings(partial),
+      bookmarks: bookmarksManager,
+      bookmarksChanged: () => chromeSend(IPC.bookmarksUpdated, bookmarksManager.list()),
+      history: historyManager,
+      downloads: downloadsManager,
+      store: aiStore,
+      mascotCommand: (cmd) => mascot.send(IPC.mascotCommand, cmd),
+      uiRect: async (target) => {
+        const selector = UI_TARGETS[target]
+        if (!selector) return null
+        const r = (await mainWindow.webContents
+          .executeJavaScript(
+            `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const r = el.getBoundingClientRect(); return r.width < 2 ? null : { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height } })()`,
+            true
+          )
+          .catch(() => null)) as { x: number; y: number; w: number; h: number } | null
+        if (!r) return null
+        const stage = tabManager.getContentRect()
+        return { x: r.x - stage.x, y: r.y - stage.y, w: r.w, h: r.h }
+      }
+    },
+    aiStore
+  )
+  aiAgent.setEmitter((event) => mascot.broadcast(IPC.aiEvent, event))
+  const remarker = new Remarker({
+    getAssistant: () => settingsStore.get().assistant,
+    tabs: tabManager,
+    agent: aiAgent,
+    windowActive: () => mainWindow.isVisible() && !mainWindow.isMinimized() && mainWindow.isFocused(),
+    chatOpen: () => mascot.isChatOpen,
+    say: (text) => mascot.send(IPC.mascotCommand, { kind: 'say', text, speak: settingsStore.get().assistant.voice })
+  })
+  remarker.start()
+  mainWindow.on('closed', () => remarker.stop())
+  const mascotEvent = (kind: MascotBrowserEvent): void => mascot.send(IPC.mascotBrowserEvent, kind)
+  const toggleAssistant = (): void => {
+    const current = settingsStore.get().assistant
+    if (!current.enabled) applySettings({ assistant: { ...current, enabled: true } })
+    mascot.toggleChat()
+  }
 
   // Sounds are played by the main window's renderer (the one page of the UI that always exists).
   const playSound = (event: SoundEvent): void => {
@@ -281,6 +358,8 @@ function createWindow(): void {
   }
   // A view attached after an overlay opened would cover it: put the bars, then the panels, back on top.
   tabManager.setOnViewsChanged(() => {
+    mascot.reposition()
+    mascot.raise()
     for (const bar of bars) {
       bar.reposition()
       bar.raise()
@@ -301,8 +380,18 @@ function createWindow(): void {
   // The suggestions reply goes to whichever UI asked for them (main window or the bottom bar).
   let suggestionsTarget: Electron.WebContents = mainWindow.webContents
 
+  // Lumi reacts when tabs come and go (not during start-up, when the session restores a dozen at once).
+  const startedAt = Date.now()
+  let knownTabIds = new Set<string>()
   const sendTabs = (): void => {
-    chromeSend(IPC.tabsUpdated, tabManager.snapshot())
+    const snapshot = tabManager.snapshot()
+    chromeSend(IPC.tabsUpdated, snapshot)
+    const ids = new Set(snapshot.map((t) => t.id))
+    if (Date.now() - startedAt > 4000 && knownTabIds.size) {
+      if ([...ids].some((id) => !knownTabIds.has(id))) mascotEvent('tab-opened')
+      else if ([...knownTabIds].some((id) => !ids.has(id))) mascotEvent('tab-closed')
+    }
+    knownTabIds = ids
   }
 
   // The open tabs are saved continuously (debounced), not only on exit, so a crash or a killed
@@ -340,12 +429,20 @@ function createWindow(): void {
   )
   tabManager.setOnFullscreenChange((hidden) => {
     mainWindow.webContents.send(IPC.fullscreenChanged, hidden)
+    mascot.setSuppressed('fullscreen', hidden)
   })
   historyManager.setOnChange(() => {
     if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.historyChanged)
   })
+  const finishedDownloads = new Set<string>(downloadsManager.list().filter((d) => d.state === 'completed').map((d) => d.id))
   downloadsManager.setOnUpdate(() => {
     const list = downloadsManager.list()
+    for (const d of list) {
+      if (d.state === 'completed' && !finishedDownloads.has(d.id)) {
+        finishedDownloads.add(d.id)
+        if (!d.incognito) mascotEvent('download-done')
+      }
+    }
     chromeSend(IPC.downloadsUpdated, list)
     // The panel is its own web contents, so it has to be told too (it's what shows live progress).
     downloadsFlyout.send(IPC.downloadsUpdated, list)
@@ -383,6 +480,8 @@ function createWindow(): void {
     settingsFlyout.send(IPC.settingsChanged, next)
     downloadsFlyout.send(IPC.settingsChanged, next)
     suggestionsFlyout.send(IPC.settingsChanged, next)
+    mascot.broadcast(IPC.settingsChanged, next)
+    mascot.setEnabled(next.assistant.enabled)
     return next
   }
   ipcMain.handle(IPC.settingsSet, (_e, partial: Partial<Settings>) => applySettings(partial))
@@ -398,6 +497,11 @@ function createWindow(): void {
       chromeSend(IPC.bookmarksUpdated, bookmarksManager.list())
     } else if (action === 'bookmarks-bar') {
       applySettings({ showBookmarksBar: !settingsStore.get().showBookmarksBar })
+    } else if (action === 'assistant') {
+      toggleAssistant()
+    } else if (action === 'voice') {
+      if (!settingsStore.get().assistant.enabled) applySettings({ assistant: { ...settingsStore.get().assistant, enabled: true } })
+      mascot.send(IPC.mascotCommand, { kind: 'voice', action: 'toggle' })
     } else if (action === 'focus-address' && settingsStore.get().autoHideAddressBar) {
       // The bar is hidden: bring it in, then let its own input take the focus.
       addressBar.show(settingsStore.get().tabLayout === 'bottom' ? 'bottom' : 'top')
@@ -652,6 +756,126 @@ function createWindow(): void {
     settingsFlyout.closeImmediate()
   })
 
+  // ---- Lumi: the mascot and the assistant
+  const num = (n: unknown): number => (typeof n === 'number' && Number.isFinite(n) ? n : NaN)
+  ipcMain.on(IPC.mascotRect, (_e, r: MascotRect) => {
+    const rect = { fx: num(r?.fx), fy: num(r?.fy), w: num(r?.w), h: num(r?.h) }
+    if (Object.values(rect).some(Number.isNaN) || rect.w < 20 || rect.h < 20 || rect.w > 1200 || rect.h > 1200) return
+    mascot.setRect(rect)
+  })
+  ipcMain.on(IPC.mascotReady, () => {
+    mascot.sendStage(true)
+    mascot.sendChatState()
+  })
+  ipcMain.on(IPC.mascotToggleChat, () => toggleAssistant())
+  ipcMain.on(IPC.mascotCloseChat, () => mascot.closeChat())
+  ipcMain.on(IPC.mascotContextMenu, () => {
+    const assistant = settingsStore.get().assistant
+    Menu.buildFromTemplate([
+      { label: mascot.isChatOpen ? 'Fechar a conversa' : `Conversar com ${PERSONAS[assistant.persona].name}`, accelerator: 'Ctrl+Shift+L', click: () => mascot.toggleChat() },
+      { label: 'Falar por voz', accelerator: 'Ctrl+Shift+M', click: () => mascot.send(IPC.mascotCommand, { kind: 'voice', action: 'toggle' }) },
+      { type: 'separator' },
+      {
+        label: 'Personagem',
+        submenu: (['girl', 'boy'] as const).map((id): Electron.MenuItemConstructorOptions => ({
+          label: `${PERSONAS[id].name} — ${id === 'girl' ? 'menina' : 'rapaz'}`,
+          type: 'radio',
+          checked: assistant.persona === id,
+          click: () => applySettings({ assistant: { ...assistant, persona: id } })
+        }))
+      },
+      {
+        label: 'Falar as respostas em voz alta',
+        type: 'checkbox',
+        checked: assistant.voice,
+        click: () => applySettings({ assistant: { ...assistant, voice: !assistant.voice } })
+      },
+      { type: 'separator' },
+      { label: 'Acenar', click: () => mascot.send(IPC.mascotCommand, { kind: 'gesture', gesture: 'wave' }) },
+      { label: 'Dançar', click: () => mascot.send(IPC.mascotCommand, { kind: 'gesture', gesture: 'dance' }) },
+      { label: 'Dormir', click: () => mascot.send(IPC.mascotCommand, { kind: 'gesture', gesture: 'sleep' }) },
+      { type: 'separator' },
+      {
+        label: 'Passear pela página',
+        type: 'checkbox',
+        checked: assistant.roam,
+        click: () => applySettings({ assistant: { ...assistant, roam: !assistant.roam } })
+      },
+      { label: 'Configurações do assistente…', click: () => tabManager.openInternal('lumo://settings') },
+      { label: 'Esconder', click: () => applySettings({ assistant: { ...assistant, enabled: false } }) }
+    ]).popup({ window: mainWindow })
+  })
+  ipcMain.handle(IPC.aiSend, (_e, text: unknown) =>
+    typeof text === 'string' ? aiAgent.send(text) : { ok: false, error: 'Mensagem inválida.', code: 'other' }
+  )
+  ipcMain.on(IPC.aiCancel, () => aiAgent.cancel())
+  // Voice: what was said (a WAV) becomes a message; what she answers becomes speech.
+  ipcMain.handle(IPC.aiVoiceSend, async (_e, wav: unknown) => {
+    if (typeof wav !== 'string' || wav.length > 12_000_000) return { ok: false, error: 'Áudio inválido.' }
+    const heard = await transcribe(aiStore, settingsStore.get().assistant, wav)
+    if (!heard.ok) return heard
+    const text = heard.text.replace(/\s+/g, ' ').trim()
+    if (text) void aiAgent.send(text, true)
+    return { ok: true, text }
+  })
+  ipcMain.handle(IPC.aiTts, (_e, text: unknown) => {
+    if (typeof text !== 'string' || !text.trim()) return { ok: false, error: 'sem texto' }
+    const cfg = settingsStore.get().assistant
+    return synthesize(aiStore, cfg, PERSONAS[cfg.persona], text.slice(0, 700))
+  })
+  {
+    const cfg = settingsStore.get().assistant
+    if (cfg.enabled && cfg.voice && cfg.voiceEngine === 'edge') warmEdge(PERSONAS[cfg.persona])
+  }
+  const ttsStreams = new Map<string, AbortController>()
+  ipcMain.handle(IPC.aiTtsStream, (e, id: unknown, text: unknown) => {
+    if (typeof id !== 'string' || typeof text !== 'string' || !text.trim()) return
+    const ctl = new AbortController()
+    ttsStreams.set(id, ctl)
+    const cfg = settingsStore.get().assistant
+    const send = (chunk: TtsChunk): void => {
+      if (!e.sender.isDestroyed()) e.sender.send(IPC.aiTtsChunk, chunk)
+    }
+    const run =
+      cfg.voiceEngine === 'edge'
+        ? synthesizeEdge(PERSONAS[cfg.persona], text.slice(0, 700), (mp3) => send({ id, mp3 }), ctl.signal)
+        : synthesizeStream(aiStore, cfg, PERSONAS[cfg.persona], text.slice(0, 700), (pcm, sampleRate) => send({ id, pcm, sampleRate }), ctl.signal)
+    void run
+      .then((r) => send(r.ok ? { id, done: true } : { id, done: true, error: r.error }))
+      .finally(() => ttsStreams.delete(id))
+  })
+  ipcMain.on(IPC.aiTtsCancel, (_e, id: unknown) => {
+    if (typeof id === 'string') ttsStreams.get(id)?.abort()
+  })
+  ipcMain.on(IPC.voiceToggle, () => mascot.send(IPC.mascotCommand, { kind: 'voice', action: 'toggle' }))
+  ipcMain.on(IPC.voiceState, (_e, state: VoiceState) => mascot.broadcast(IPC.aiEvent, { type: 'voice', state }))
+  ipcMain.on(IPC.voiceError, (_e, message: unknown) => {
+    if (typeof message === 'string') mascot.broadcast(IPC.aiEvent, { type: 'error', message: message.slice(0, 300), code: 'other' })
+  })
+  ipcMain.handle(IPC.aiHistory, () => ({ messages: aiStore.history(), busy: aiAgent.isBusy }))
+  ipcMain.handle(IPC.aiClear, () => aiAgent.clearConversation())
+  ipcMain.on(IPC.aiConfirmReply, (_e, id: unknown, ok: unknown) => {
+    if (typeof id === 'string') aiAgent.replyConfirm(id, ok === true)
+  })
+  const knownProvider = (id: unknown): id is AiProviderId => AI_PROVIDERS.some((p) => p.id === id)
+  ipcMain.handle(IPC.aiSetKey, (_e, provider: unknown, key: unknown) => {
+    if (knownProvider(provider) && typeof key === 'string') aiStore.setKey(provider, key.slice(0, 500))
+    return { keys: aiStore.keyStatus(), secure: aiStore.secure }
+  })
+  ipcMain.handle(IPC.aiKeyStatus, () => ({ keys: aiStore.keyStatus(), secure: aiStore.secure }))
+  ipcMain.handle(IPC.aiTest, () => aiAgent.test())
+  ipcMain.handle(IPC.aiModels, () => aiAgent.models())
+  ipcMain.handle(IPC.aiNotes, () => aiStore.notes())
+  ipcMain.handle(IPC.aiBlockedSites, () => aiStore.blockedSites())
+  ipcMain.handle(IPC.aiUnblockSite, (_e, host: unknown) => {
+    if (typeof host === 'string') aiStore.unblockSite(host)
+    return aiStore.blockedSites()
+  })
+  ipcMain.handle(IPC.aiForgetNote, (_e, id: unknown) => {
+    if (typeof id === 'string') aiStore.removeNote(id)
+    return aiStore.notes()
+  })
+
   ipcMain.handle(IPC.memoryGet, () => memoryManager.getSnapshot())
   ipcMain.handle(IPC.defaultBrowserGet, () => getDefaultBrowserStatus())
   ipcMain.handle(IPC.defaultBrowserSet, () => makeDefaultBrowser())
@@ -666,7 +890,11 @@ function createWindow(): void {
     app.exit(0)
   })
 
-  ipcMain.on(IPC.setModalActive, (_e, active: boolean) => tabManager.setModalActive(active))
+  ipcMain.on(IPC.setModalActive, (_e, active: boolean) => {
+    tabManager.setModalActive(active)
+    // The overlay views paint above the app's own dialogs, so Lumi steps aside while one is up.
+    mascot.setSuppressed('modal', active === true)
+  })
   ipcMain.on('dialog:alert', (_e, payload: { message: string; domain: string }) => {
     mainWindow.webContents.send(IPC.alertDialogShow, {
       id: randomUUID(),

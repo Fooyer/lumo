@@ -80,8 +80,11 @@ export class TabManager {
   private onAudible: (audible: boolean) => void = () => {}
   private audible = false
   private onPrivateClosed: () => void = () => {}
-  private shortcutListener: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar') => void = () => {}
+  private shortcutListener: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar' | 'assistant' | 'voice') => void = () => {}
   private findListener: (result: FindResult) => void = () => {}
+  private blockedPage: ((url: string) => string | null) | null = null
+  /** Tabs showing the assistant's block page → the address they were really trying to open. */
+  private blockedAddress = new Map<string, string>()
 
   constructor(private win: BrowserWindow) {
     win.on('resize', () => this.reflowVisible())
@@ -105,7 +108,7 @@ export class TabManager {
   }
 
   /** Called when the last private tab has closed, so what the private session stored can be wiped. */
-  setOnShortcut(cb: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar') => void): void {
+  setOnShortcut(cb: (action: ShortcutAction | 'bookmark' | 'bookmarks-bar' | 'assistant' | 'voice') => void): void {
     this.shortcutListener = cb
   }
 
@@ -219,6 +222,22 @@ export class TabManager {
     return this.contentRect ? this.contentRect.y + this.contentRect.height : null
   }
 
+  /** The page area as laid out right now (window client coordinates), for overlays that live on top of it. */
+  /** Gives the page a blocked address is replaced with (null when the address is not blocked). */
+  setBlockedPage(fn: (url: string) => string | null): void {
+    this.blockedPage = fn
+  }
+
+  getContentRect(): Rectangle {
+    return this.contentBounds()
+  }
+
+  /** Loads an address in an existing tab (no smart interpretation: the address is used as given). */
+  loadUrl(id: string, url: string): void {
+    const tab = this.get(id)
+    if (tab) this.loadInTab(tab, url)
+  }
+
   private contentBounds(): Rectangle {
     const [winW, winH] = this.win.getContentSize()
     const r = this.contentRect
@@ -297,6 +316,13 @@ export class TabManager {
       this.onChange()
     })
     wc.on('did-navigate', (_e, navUrl) => {
+      const blockedFor = this.blockedAddress.get(tab.id)
+      if (blockedFor && navUrl.startsWith('data:')) {
+        tab.url = blockedFor // the address bar keeps showing what was asked for, not the block page's own data: address
+        this.onChange()
+        return
+      }
+      this.blockedAddress.delete(tab.id)
       tab.url = navUrl
       if (!tab.incognito) this.history?.recordVisit(navUrl)
       this.onChange()
@@ -309,8 +335,18 @@ export class TabManager {
       tab.url = navUrl
       this.onChange()
     })
-    wc.on('did-fail-load', (_e, code, desc) => {
+    wc.on('did-fail-load', (_e, code, desc, failedUrl, isMainFrame) => {
       if (code === -3) return
+      if (code === -20 && isMainFrame) {
+        // cancelled by the site blocker: show the assistant's page in its place
+        const page = this.blockedPage?.(failedUrl)
+        if (page) {
+          tab.title = 'Site bloqueado'
+          this.blockedAddress.set(tab.id, failedUrl)
+          void wc.loadURL(page)
+          return
+        }
+      }
       tab.loading = false
       tab.title = `Falha ao carregar (${desc})`
       this.onChange()
@@ -590,6 +626,14 @@ export class TabManager {
       }
       if (key === 'b') {
         this.shortcutListener('bookmarks-bar')
+        return true
+      }
+      if (key === 'l') {
+        this.shortcutListener('assistant')
+        return true
+      }
+      if (key === 'm') {
+        this.shortcutListener('voice')
         return true
       }
       if (key === 'g') {

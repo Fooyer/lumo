@@ -1,5 +1,7 @@
 import { useState } from 'react'
-import { Bookmark, LayoutPanelLeft, Palette, PartyPopper, Store, Volume2 } from 'lucide-react'
+import { Bookmark, LayoutPanelLeft, Palette, PartyPopper, Sparkles, Store, Volume2 } from 'lucide-react'
+import { PERSONAS, type PersonaId } from '@shared/ai'
+import MascotSvg from '../mascot/MascotSvg'
 import type { Settings } from '@shared/ipc'
 import LayoutPicker from './LayoutPicker'
 import ThemeModeToggle from './ThemeModeToggle'
@@ -10,7 +12,7 @@ interface Props {
   onChange: (partial: Partial<Settings>) => void
 }
 
-const STEPS = ['Tema', 'Abas', 'Barras', 'Sons', 'Pronto'] as const
+const STEPS = ['Tema', 'Abas', 'Barras', 'Sons', 'Personagem', 'Pronto'] as const
 
 /** First-run tour: each step changes a real setting on the spot, so what's picked is what they'll get. */
 export default function OnboardingTour({ settings, onChange }: Props): JSX.Element {
@@ -125,6 +127,31 @@ export default function OnboardingTour({ settings, onChange }: Props): JSX.Eleme
             >
               <Store size={13} strokeWidth={2.4} /> Abrir a loja de mods
             </button>
+          </>
+        )
+      case 4:
+        return (
+          <>
+            <div className="tour__icon"><Sparkles size={22} strokeWidth={2.2} /></div>
+            <h2>Quem vai ficar com você?</h2>
+            <p>Uma assistente de IA mora no canto da tela: conversa, comenta o que você faz e ajuda a navegar. Escolha com quem você quer andar.</p>
+            <div className="persona-row">
+              {(Object.keys(PERSONAS) as PersonaId[]).map((id) => (
+                <button
+                  key={id}
+                  className={`persona-card ${settings.assistant.persona === id ? 'persona-card--on' : ''}`}
+                  onClick={() => onChange({ assistant: { ...settings.assistant, persona: id } })}
+                  aria-pressed={settings.assistant.persona === id}
+                >
+                  <span className="persona-card__art">
+                    <MascotSvg variant={id} />
+                  </span>
+                  <strong>{PERSONAS[id].name}</strong>
+                  <span>{PERSONAS[id].tagline}</span>
+                </button>
+              ))}
+            </div>
+            <p className="settings-hint">Dá para trocar depois em Configurações → Assistente.</p>
           </>
         )
       default:

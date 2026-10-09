@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Gauge, Palette, Search, Settings as SettingsIcon, Volume2, Wrench, X } from 'lucide-react'
+import { Gauge, Palette, Search, Settings as SettingsIcon, Sparkles, Volume2, Wrench, X } from 'lucide-react'
 import type {
   Settings,
   DefaultBrowserStatus,
@@ -9,6 +9,7 @@ import type {
 import AppearanceSection from './AppearanceSection'
 import ModsSection from './ModsSection'
 import SoundsSection from './SoundsSection'
+import AssistantSection from './AssistantSection'
 import { Item, Section } from './SettingsParts'
 
 function formatBytes(bytes: number): string {
@@ -173,6 +174,7 @@ function UpdatesSection({
 const CATEGORIES = [
   { id: 'general', label: 'Geral', icon: SettingsIcon },
   { id: 'personalization', label: 'Personalização', icon: Palette },
+  { id: 'assistant', label: 'Assistente', icon: Sparkles },
   { id: 'sounds', label: 'Sons e música', icon: Volume2 },
   { id: 'performance', label: 'Desempenho', icon: Gauge },
   { id: 'system', label: 'Sistema', icon: Wrench }
@@ -278,6 +280,8 @@ export default function SettingsPage({ settings, onChange }: Props): JSX.Element
             <ModsSection settings={settings} onChange={onChange} mods={mods} refreshMods={refreshMods} />
           </>
         )
+      case 'assistant':
+        return <AssistantSection settings={settings} onChange={onChange} />
       case 'sounds':
         return <SoundsSection settings={settings} onChange={onChange} mods={mods} />
       case 'performance':

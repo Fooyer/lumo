@@ -1,0 +1,977 @@
+/* ==========================================================================
+   Lumi — the mascot (character view) and her chat panel
+   ========================================================================== */
+
+html.mascot-window,
+html.mascot-window body,
+body.mascot-window,
+body.mascot-window #root {
+  background: transparent !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+/* ---- the drawing ---- */
+.lm-root {
+  --lm-ink: #2b2540;
+  --lm-glow: color-mix(in srgb, var(--accent, #2e6bff) 55%, #ffffff);
+  position: fixed;
+  inset: 0;
+  user-select: none;
+  -webkit-user-select: none;
+  font-family: 'Nunito Variable', 'Nunito', system-ui, sans-serif;
+}
+
+.lm-body {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  pointer-events: none;
+  cursor: grab;
+}
+
+.lm-body:active {
+  cursor: grabbing;
+}
+
+.lm-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* only the painted shapes catch the pointer, so the empty corners of her box do not */
+.lm-svg path,
+.lm-svg rect,
+.lm-svg ellipse,
+.lm-svg circle {
+  pointer-events: auto;
+}
+
+.lm-svg .lm-orb {
+  pointer-events: none;
+}
+
+.lm-fur {
+  fill: #fff0d9;
+}
+.lm-fur2 {
+  fill: #fffaf0;
+}
+.lm-acc {
+  fill: var(--accent, #2e6bff);
+}
+.lm-paw {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 62%, #1c1830);
+}
+.lm-ear-inner {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 38%, #ffd0dc);
+}
+.lm-ink {
+  stroke: var(--lm-ink);
+  stroke-width: 3.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.lm-stroke {
+  fill: none;
+  stroke: var(--lm-ink);
+  stroke-width: 4.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.lm-stroke--thin {
+  stroke-width: 3.2;
+}
+.lm-eye {
+  fill: var(--lm-ink);
+}
+.lm-iris {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 70%, #14102a);
+}
+.lm-shine {
+  fill: #fff;
+}
+.lm-pad {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 45%, #ffc2d2);
+}
+.lm-blush {
+  fill: #ff8fa8;
+}
+.lm-nose {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 55%, #3b1d33);
+}
+.lm-whisker {
+  fill: none;
+  stroke: var(--lm-ink);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  opacity: 0.45;
+}
+.lm-mouth {
+  fill: #3b2236;
+}
+.lm-tongue {
+  fill: #ff7a93;
+}
+.lm-tear {
+  fill: #7fd0ff;
+  stroke: #3c93c8;
+  stroke-width: 1.4;
+}
+.lm-shadow {
+  fill: rgba(0, 0, 0, 0.24);
+}
+.lm-core {
+  fill: #fff;
+  opacity: 0.95;
+}
+.lm-stripe {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.lm-handle {
+  stroke: color-mix(in srgb, var(--accent, #2e6bff) 60%, #1c1830);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.lm-glass {
+  fill: rgba(190, 235, 255, 0.5);
+}
+.lm-glint {
+  fill: none;
+  stroke: #fff;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.85;
+}
+.lm-page {
+  fill: #ffffff;
+}
+.lm-lines {
+  fill: none;
+  stroke: #b9b3cc;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.lm-lid {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 55%, #26223a);
+}
+.lm-logo {
+  fill: #fff;
+  opacity: 0.92;
+}
+
+/* ---- speech bubble ---- */
+.lm-bubble {
+  position: absolute;
+  left: calc(50% - 122px);
+  bottom: 150px;
+  box-sizing: border-box;
+  padding: 10px 13px 11px;
+  border-radius: 16px;
+  background: var(--bg-elevated, #1d1f2b);
+  color: var(--text, #eef0f6);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+  font-size: 13px;
+  line-height: 1.4;
+  font-weight: 600;
+  cursor: pointer;
+  animation: lm-pop 0.28s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+  transform-origin: 50% 100%;
+  word-break: break-word;
+}
+
+.lm-bubble::after {
+  content: '';
+  position: absolute;
+  left: calc(50% + var(--tail-x, 0px) - 7px);
+  bottom: -7.5px;
+  width: 13px;
+  height: 13px;
+  background: inherit;
+  border-right: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  border-bottom: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  transform: rotate(45deg);
+  border-bottom-right-radius: 4px;
+}
+
+@keyframes lm-pop {
+  from {
+    opacity: 0;
+    scale: 0.7;
+  }
+  to {
+    opacity: 1;
+    scale: 1;
+  }
+}
+
+/* ---- floating effects (hearts, zzz, notes…) ---- */
+.lm-fxlayer {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  height: 0;
+  pointer-events: none;
+}
+
+.lm-fx {
+  position: absolute;
+  bottom: 0;
+  font-weight: 900;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--accent, #2e6bff);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6);
+  animation: lm-float 1.8s ease-out forwards;
+  will-change: transform, opacity;
+}
+
+.lm-fx--zzz::before {
+  content: 'Z';
+  font-size: 20px;
+  color: #8ab4ff;
+}
+.lm-fx--heart::before {
+  content: '♥';
+  color: #ff5d83;
+}
+.lm-fx--note::before {
+  content: '♪';
+  color: #b57cff;
+}
+.lm-fx--bang::before {
+  content: '!';
+  color: #ff5d5d;
+  font-size: 28px;
+}
+.lm-fx--ask::before {
+  content: '?';
+}
+.lm-fx--dots::before {
+  content: '…';
+  font-size: 26px;
+  color: var(--text, #888);
+}
+.lm-fx--spark::before {
+  content: '✦';
+  color: #ffd25e;
+}
+.lm-fx--star::before {
+  content: '★';
+  color: #ffc83d;
+}
+.lm-fx--gear::before {
+  content: '⚙';
+  color: #8e9ab5;
+  display: inline-block;
+  animation: lm-spin 1.8s linear;
+}
+.lm-fx--ring {
+  width: 22px;
+  height: 22px;
+  margin-left: 40px;
+  border-radius: 50%;
+  border: 3px solid #ffb84d;
+  animation: lm-ring 0.9s ease-out forwards;
+}
+.lm-fx--dust {
+  width: 10px;
+  height: 10px;
+  bottom: -34px;
+  border-radius: 50%;
+  background: rgba(190, 190, 200, 0.7);
+  animation: lm-dust 0.6s ease-out forwards;
+}
+
+@keyframes lm-float {
+  0% {
+    transform: translateY(0) scale(0.5) rotate(-8deg);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-12px) scale(1.1) rotate(6deg);
+  }
+  100% {
+    transform: translateY(-88px) scale(0.9) rotate(-6deg);
+    opacity: 0;
+  }
+}
+@keyframes lm-ring {
+  from {
+    transform: scale(0.3);
+    opacity: 1;
+  }
+  to {
+    transform: scale(2.4);
+    opacity: 0;
+  }
+}
+@keyframes lm-dust {
+  from {
+    transform: translate(0, 0) scale(0.4);
+    opacity: 0.9;
+  }
+  to {
+    transform: translate(26px, -14px) scale(1.6);
+    opacity: 0;
+  }
+}
+@keyframes lm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ==========================================================================
+   Chat panel
+   ========================================================================== */
+
+html.mascot-chat-window,
+html.mascot-chat-window body,
+body.mascot-chat-window,
+body.mascot-chat-window #root {
+  background: transparent !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+}
+
+.lc-wrap {
+  position: fixed;
+  inset: 12px; /* keep in sync with OVERLAY_SHADOW_PAD */
+  display: flex;
+  flex-direction: column;
+  border-radius: 20px;
+  background: var(--bg, #14151d);
+  color: var(--text, #eef0f6);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.38), 0 2px 8px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+  font-family: 'Nunito Variable', 'Nunito', system-ui, sans-serif;
+  font-size: 13.5px;
+  animation: lc-in 0.2s cubic-bezier(0.2, 1.2, 0.4, 1) both;
+}
+
+.lc-wrap--closing {
+  animation: lc-out 0.16s ease-in both;
+}
+
+@keyframes lc-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+}
+@keyframes lc-out {
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.97);
+  }
+}
+
+.lc-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 12px 10px 14px;
+  background: linear-gradient(135deg, var(--accent-soft, rgba(46, 107, 255, 0.16)), transparent 70%);
+  border-bottom: 1.5px solid var(--border, rgba(255, 255, 255, 0.1));
+}
+
+.lc-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--on-accent, #fff);
+  background: var(--accent, #2e6bff);
+  font-weight: 900;
+  font-size: 17px;
+  box-shadow: 0 0 0 3px var(--accent-soft, rgba(46, 107, 255, 0.2));
+  flex: none;
+}
+
+.lc-title {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.2;
+}
+.lc-title strong {
+  display: block;
+  font-size: 14.5px;
+  font-weight: 800;
+}
+.lc-title span {
+  font-size: 11.5px;
+  color: var(--text-dim, #8c90a3);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lc-iconbtn {
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim, #8c90a3);
+  cursor: pointer;
+  flex: none;
+}
+.lc-iconbtn:hover {
+  background: var(--accent-soft, rgba(255, 255, 255, 0.08));
+  color: var(--text, #fff);
+}
+
+.lc-log {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 12px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  scroll-behavior: smooth;
+}
+
+.lc-msg {
+  max-width: 88%;
+  padding: 8px 12px 9px;
+  border-radius: 16px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+  animation: lc-msg 0.22s ease-out both;
+  user-select: text;
+}
+@keyframes lc-msg {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.lc-msg--user {
+  align-self: flex-end;
+  background: var(--accent, #2e6bff);
+  color: var(--on-accent, #fff);
+  border-bottom-right-radius: 5px;
+}
+.lc-msg--bot {
+  align-self: flex-start;
+  background: var(--bg-elevated, #1d1f2b);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.1));
+  border-bottom-left-radius: 5px;
+}
+.lc-msg a {
+  color: var(--accent, #2e6bff);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.lc-msg code {
+  background: var(--accent-soft, rgba(255, 255, 255, 0.1));
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 12.5px;
+}
+.lc-msg--error {
+  align-self: stretch;
+  max-width: 100%;
+  background: var(--danger-soft, rgba(255, 77, 106, 0.16));
+  border: 1.5px solid var(--danger, #ff4d6a);
+  font-size: 12.5px;
+}
+
+.lc-steps {
+  align-self: flex-start;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 94%;
+}
+.lc-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 4px 10px 4px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft, rgba(46, 107, 255, 0.16));
+  color: var(--text, #fff);
+  animation: lc-msg 0.2s ease-out both;
+  align-self: flex-start;
+}
+.lc-step--fail {
+  background: var(--danger-soft, rgba(255, 77, 106, 0.16));
+}
+.lc-step__dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid var(--accent, #2e6bff);
+  border-top-color: transparent;
+  animation: lm-spin 0.8s linear infinite;
+  flex: none;
+}
+.lc-step--done .lc-step__dot {
+  animation: none;
+  background: var(--success, #22c55e);
+  border-color: var(--success, #22c55e);
+}
+.lc-step--fail .lc-step__dot {
+  animation: none;
+  background: var(--danger, #ff4d6a);
+  border-color: var(--danger, #ff4d6a);
+}
+
+.lc-typing {
+  align-self: flex-start;
+  display: flex;
+  gap: 4px;
+  padding: 11px 13px;
+  border-radius: 16px;
+  background: var(--bg-elevated, #1d1f2b);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.1));
+}
+.lc-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-dim, #8c90a3);
+  animation: lc-bounce 1s infinite ease-in-out;
+}
+.lc-typing i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.lc-typing i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes lc-bounce {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+
+.lc-confirm {
+  align-self: stretch;
+  padding: 11px 12px;
+  border-radius: 14px;
+  background: var(--accent-soft, rgba(46, 107, 255, 0.16));
+  border: 1.5px solid var(--accent, #2e6bff);
+  animation: lc-msg 0.2s ease-out both;
+}
+.lc-confirm strong {
+  display: block;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #8c90a3);
+  margin-bottom: 3px;
+}
+.lc-confirm p {
+  margin: 0 0 9px;
+  font-weight: 700;
+  word-break: break-word;
+}
+.lc-confirm__row {
+  display: flex;
+  gap: 8px;
+}
+
+.lc-btn {
+  flex: 1;
+  border: 0;
+  border-radius: 11px;
+  padding: 8px 12px;
+  font: inherit;
+  font-weight: 800;
+  cursor: pointer;
+  color: var(--text, #fff);
+  background: var(--bg-elevated, #1d1f2b);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+}
+.lc-btn:hover {
+  filter: brightness(1.12);
+}
+.lc-btn--primary {
+  background: var(--accent, #2e6bff);
+  color: var(--on-accent, #fff);
+  border-color: transparent;
+}
+.lc-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.lc-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 12px 8px;
+}
+.lc-chip {
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--text, #fff);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.lc-chip:hover {
+  background: var(--accent-soft, rgba(255, 255, 255, 0.08));
+  border-color: var(--accent, #2e6bff);
+}
+
+.lc-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 9px 10px 11px;
+  border-top: 1.5px solid var(--border, rgba(255, 255, 255, 0.1));
+}
+.lc-input {
+  flex: 1;
+  resize: none;
+  max-height: 110px;
+  min-height: 38px;
+  padding: 9px 12px;
+  border-radius: 14px;
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: var(--bg-elevated, #1d1f2b);
+  color: var(--text, #fff);
+  font: inherit;
+  line-height: 1.35;
+  outline: none;
+}
+.lc-input:focus {
+  border-color: var(--accent, #2e6bff);
+}
+.lc-input::placeholder {
+  color: var(--text-dim, #8c90a3);
+}
+.lc-send {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  border: 0;
+  display: grid;
+  place-items: center;
+  background: var(--accent, #2e6bff);
+  color: var(--on-accent, #fff);
+  cursor: pointer;
+  flex: none;
+}
+.lc-send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.lc-send--stop {
+  background: var(--danger, #ff4d6a);
+  color: var(--on-danger, #fff);
+}
+
+/* first-run: asking for a key */
+.lc-setup {
+  margin: 12px;
+  padding: 13px;
+  border-radius: 16px;
+  background: var(--bg-elevated, #1d1f2b);
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.lc-setup h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.lc-setup p {
+  margin: 0;
+  color: var(--text-dim, #8c90a3);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.lc-setup select,
+.lc-setup input {
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: var(--bg, #14151d);
+  color: var(--text, #fff);
+  font: inherit;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+.lc-setup select:focus,
+.lc-setup input:focus {
+  border-color: var(--accent, #2e6bff);
+}
+.lc-link {
+  color: var(--accent, #2e6bff);
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lm-bubble,
+  .lm-fx,
+  .lc-wrap,
+  .lc-msg {
+    animation-duration: 0.01s !important;
+  }
+}
+
+/* ==========================================================================
+   The two characters: Lumi (girl) and Lux (boy)
+   ========================================================================== */
+.lm-var-girl {
+  --skin: #ffe4d2;
+  --hair: color-mix(in srgb, var(--accent, #2e6bff) 22%, #d8c4ff);
+  --cloth: color-mix(in srgb, var(--accent, #2e6bff) 72%, #1b2350);
+  --shoe: color-mix(in srgb, var(--accent, #2e6bff) 55%, #1c1830);
+  --bow: var(--danger, #ff4d6a);
+}
+.lm-var-boy {
+  --skin: #f7d8bf;
+  --hair: #262b4a;
+  --cloth: color-mix(in srgb, var(--accent, #2e6bff) 30%, #1e2442);
+  --shoe: #eceffa;
+  --bow: var(--accent, #2e6bff);
+}
+.lm-skin {
+  fill: var(--skin);
+}
+.lm-hair {
+  fill: var(--hair);
+}
+.lm-cloth {
+  fill: var(--cloth);
+}
+.lm-cuff {
+  fill: var(--accent, #2e6bff);
+}
+.lm-shoe {
+  fill: var(--shoe);
+}
+.lm-bow {
+  fill: var(--bow);
+}
+.lm-collar {
+  fill: #ffffff;
+}
+.lm-skirt {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 55%, #262c66);
+}
+.lm-fold {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.22);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.lm-sock {
+  fill: #fbf6ff;
+}
+.lm-sockband {
+  fill: none;
+  stroke: var(--bow);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.lm-pants {
+  fill: #2a3050;
+}
+.lm-shirt {
+  fill: #f4f6ff;
+}
+.lm-zip {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.55);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+}
+.lm-pocket {
+  fill: color-mix(in srgb, var(--cloth) 80%, #000);
+  stroke-width: 2.2;
+}
+.lm-tailtip {
+  fill: #f6f8ff;
+}
+.lm-streak {
+  fill: #e8efff;
+  stroke: var(--lm-ink);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+}
+.lm-ahoge {
+  fill: none;
+  stroke: var(--hair);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+.lm-lash {
+  fill: none;
+  stroke: var(--lm-ink);
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.lm-lash--thin {
+  stroke-width: 3;
+}
+.lm-brow--girl {
+  stroke: color-mix(in srgb, var(--hair) 70%, #3a2a55);
+  stroke-width: 3;
+}
+.lm-brow--boy {
+  stroke: var(--hair);
+  stroke-width: 5.2;
+}
+.lm-nosemark {
+  fill: none;
+  stroke: color-mix(in srgb, var(--skin) 55%, #b4705a);
+  stroke-width: 1.8;
+  stroke-linecap: round;
+}
+.lm-ink--thin {
+  stroke: var(--lm-ink);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.lm-var-boy .lm-ear-inner {
+  fill: color-mix(in srgb, var(--accent, #2e6bff) 45%, #e9ecff);
+}
+.lm-var-girl .lm-ear-inner {
+  fill: color-mix(in srgb, var(--bow) 55%, #ffd7e6);
+}
+
+/* listening: a soft pulse around the character */
+.lm-listening-ring {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 120px;
+  height: 30px;
+  margin-left: -60px;
+  border-radius: 50%;
+  border: 3px solid var(--accent, #2e6bff);
+  opacity: 0;
+  pointer-events: none;
+}
+.lm-root--listening .lm-listening-ring {
+  animation: lm-listen 1.4s ease-out infinite;
+}
+@keyframes lm-listen {
+  from {
+    opacity: 0.85;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 0;
+    transform: scale(1.9);
+  }
+}
+.lm-bubble--listening {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.lm-meter {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 18px;
+}
+.lm-meter i {
+  width: 4px;
+  min-height: 4px;
+  border-radius: 2px;
+  background: var(--accent, #2e6bff);
+  height: calc(4px + var(--lvl, 0) * 14px);
+  transition: height 0.06s linear;
+}
+.lm-meter i:nth-child(2) {
+  height: calc(4px + var(--lvl, 0) * 22px);
+}
+.lm-meter i:nth-child(3) {
+  height: calc(4px + var(--lvl, 0) * 18px);
+}
+
+/* chat: voice controls and the two avatars */
+.lc-avatar--boy {
+  background: linear-gradient(135deg, var(--accent, #2e6bff), #262b4a);
+}
+.lc-avatar--girl {
+  background: linear-gradient(135deg, var(--accent, #2e6bff), var(--danger, #ff4d6a));
+}
+.lc-iconbtn--on {
+  color: var(--accent, #2e6bff);
+  background: var(--accent-soft, rgba(46, 107, 255, 0.16));
+}
+.lc-mic {
+  width: 38px;
+  height: 38px;
+  border-radius: 13px;
+  border: 1.5px solid var(--border, rgba(255, 255, 255, 0.14));
+  background: var(--bg-elevated, #1d1f2b);
+  color: var(--text, #fff);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex: none;
+}
+.lc-mic:hover:not(:disabled) {
+  border-color: var(--accent, #2e6bff);
+  color: var(--accent, #2e6bff);
+}
+.lc-mic:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.lc-mic--live {
+  background: var(--danger, #ff4d6a);
+  border-color: transparent;
+  color: var(--on-danger, #fff);
+  animation: lc-pulse 1.2s ease-in-out infinite;
+}
+@keyframes lc-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--danger-soft, rgba(255, 77, 106, 0.4));
+  }
+  50% {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}

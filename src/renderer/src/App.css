@@ -3113,6 +3113,7 @@ body.flyout-window #root {
 /* Dark/light switch */
 .mode-toggle {
   display: inline-flex;
+  width: fit-content;
   padding: 3px;
   gap: 3px;
   border-radius: 999px;
@@ -3151,6 +3152,7 @@ body.flyout-window #root {
 }
 
 .settings-flyout-group .mode-toggle {
+  align-self: flex-start;
   margin-bottom: 10px;
 }
 
@@ -3458,4 +3460,111 @@ body.flyout-window #root {
 .folder-modal__actions .alert-modal__ok:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Lumi's notes in the settings */
+.lumi-notes {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lumi-notes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  background: var(--bg-elevated);
+  border: 1.5px solid var(--border);
+}
+
+.nav-btn--lumi {
+  color: var(--accent);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+/* Persona picker (settings) */
+.persona-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.persona-card {
+  width: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px 14px;
+  border-radius: 16px;
+  border: 2px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s;
+}
+
+.persona-card span:last-child {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
+.persona-card:hover {
+  transform: translateY(-2px);
+}
+
+.persona-card--on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.persona-card__art {
+  display: block;
+  width: 120px;
+  height: 126px;
+}
+
+.persona-card__art svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+/* The tour's character step: two cards side by side inside the narrow tour dialog */
+.tour .persona-row {
+  flex-wrap: nowrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+.tour .persona-card {
+  width: auto;
+  flex: 1;
+  min-width: 0;
+  padding: 10px 8px 12px;
+}
+
+.tour .persona-card__art {
+  width: 92px;
+  height: 98px;
+}
+
+.tour .persona-card span:last-child {
+  font-size: 11px;
 }
