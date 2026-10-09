@@ -14,7 +14,8 @@ import { useTheme } from '../lib/useTheme'
 import MascotSvg, { GROUND_Y, SVG_H, SVG_W } from './MascotSvg'
 import { Rig, REST } from './rig'
 import { Brain, type FxKind } from './brain'
-import { forSpeech, listenOnce, playPcm, speakStreamed, speakWithSystemVoice, type Playback } from './audio'
+import { chime, forSpeech, listenOnce, playPcm, speakStreamed, speakWithSystemVoice, type Playback } from './audio'
+import { WakeListener } from './wake'
 
 const BASE_K = 0.6
 const FX_SIDE = 34
@@ -79,8 +80,12 @@ export default function Mascot(): JSX.Element {
   const awaitingReply = useRef(false)
   const startListeningRef = useRef<() => void>(() => {})
 
+  /** Right after she stops talking the microphone may still catch her own voice: it is ignored for a moment. */
+  const quietUntil = useRef(0)
+
   const setVoice = useCallback((state: VoiceState) => {
     if (voiceRef.current === state) return
+    if (voiceRef.current === 'speaking') quietUntil.current = performance.now() + 900
     voiceRef.current = state
     setVoiceUi(state)
     brainRef.current?.setListening(state === 'listening')
@@ -232,6 +237,67 @@ export default function Mascot(): JSX.Element {
     else if (voiceRef.current === 'idle') void startListening()
   }, [startListening, stopListening, stopSpeaking])
 
+  // ---------------------------------------------------------------- wake word ("Lumi, ...")
+  const [wakeOn, setWakeOn] = useState(false)
+  useEffect(() => {
+    if (!wakeOn) return
+    let alive = true
+    let listener: WakeListener | null = null
+    let checking = false
+
+    const onUtterance = async (wav: string): Promise<void> => {
+      if (checking || !alive) return
+      checking = true
+      try {
+        const r = await window.lumo.aiWakeCheck(wav)
+        const brain = brainRef.current
+        if (!alive || !r.wake || !brain || voiceRef.current !== 'idle') return
+        brain.touch()
+        brain.setMood('surprised', 700)
+        chime()
+        if (r.hasCommand) {
+          // she was called and asked in one breath: the same recording is the request
+          setVoice('transcribing')
+          const sent = await window.lumo.aiVoiceSend(wav)
+          setVoice('idle')
+          if (!sent.ok) emitErrorToChat(sent.error ?? 'Não consegui entender o áudio.')
+          else if (sent.text) awaitingReply.current = true
+        } else {
+          setTimeout(() => startListeningRef.current(), 250)
+        }
+      } finally {
+        checking = false
+      }
+    }
+
+    void (async () => {
+      const status = await window.lumo.aiWakePrepare()
+      if (!alive || status.state === 'error') {
+        if (alive && status.message) emitErrorToChat(status.message)
+        return
+      }
+      listener = new WakeListener({
+        shouldListen: () =>
+          voiceRef.current === 'idle' &&
+          performance.now() > quietUntil.current &&
+          !checking &&
+          settingsRef.current?.voiceMode !== true,
+        onUtterance: (wav) => void onUtterance(wav),
+        onError: (message) => emitErrorToChat(message)
+      })
+      if (!(await listener.start())) {
+        listener = null
+        return
+      }
+      if (!alive) listener?.stop()
+    })()
+
+    return () => {
+      alive = false
+      listener?.stop()
+    }
+  }, [wakeOn, setVoice])
+
   // ---------------------------------------------------------------- setup: brain and loop
   useEffect(() => {
     const brain = new Brain({
@@ -329,6 +395,7 @@ export default function Mascot(): JSX.Element {
       scaleRef.current = s.assistant.scale
       setScale(s.assistant.scale)
       brainRef.current?.setRoam(s.assistant.roam)
+      setWakeOn(s.assistant.enabled && s.assistant.wakeWord)
       if (personaRef.current !== s.assistant.persona) {
         const switching = !firstSettings
         personaRef.current = s.assistant.persona

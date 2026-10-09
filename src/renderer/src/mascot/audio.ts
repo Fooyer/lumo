@@ -20,7 +20,7 @@ interface ListenOptions {
 
 const TARGET_RATE = 16_000
 
-function downsample(input: Float32Array, from: number, to: number): Float32Array {
+export function downsample(input: Float32Array, from: number, to: number): Float32Array {
   if (from === to) return input
   const ratio = from / to
   const out = new Float32Array(Math.floor(input.length / ratio))
@@ -34,7 +34,7 @@ function downsample(input: Float32Array, from: number, to: number): Float32Array
   return out
 }
 
-function toWavBase64(samples: Float32Array, rate: number): string {
+export function toWavBase64(samples: Float32Array, rate: number): string {
   const buffer = new ArrayBuffer(44 + samples.length * 2)
   const view = new DataView(buffer)
   const write = (offset: number, text: string): void => {
@@ -171,6 +171,31 @@ export async function listenOnce(opts: ListenOptions): Promise<ListenResult> {
 }
 
 // ------------------------------------------------------------------ speaking
+
+/** A short two-note "I heard you" beep, for when she picks up her name. */
+export function chime(): void {
+  try {
+    playCtx ??= new AudioContext()
+    const ctx = playCtx
+    void ctx.resume()
+    const t = ctx.currentTime
+    for (const [i, freq] of [660, 880].entries()) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0.0001, t + i * 0.09)
+      gain.gain.exponentialRampToValueAtTime(0.14, t + i * 0.09 + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.09 + 0.16)
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.start(t + i * 0.09)
+      osc.stop(t + i * 0.09 + 0.18)
+    }
+  } catch {
+    // no sound: the animation still shows she heard
+  }
+}
 
 export interface Playback {
   done: Promise<void>

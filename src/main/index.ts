@@ -32,6 +32,7 @@ import { Updater } from './updater'
 import { getPrivateSession, onPrivateSession, wipePrivateSession } from './privateSession'
 import { blockedPageUrl, installSiteBlocker } from './ai/siteBlock'
 import { Remarker } from './ai/remarks'
+import { WakeEngine, stripWake } from './ai/wake'
 import { ModsManager } from './modsManager'
 import { MascotOverlay } from './mascotOverlay'
 import { AiStore } from './ai/aiStore'
@@ -814,7 +815,8 @@ function createWindow(): void {
     if (typeof wav !== 'string' || wav.length > 12_000_000) return { ok: false, error: 'Áudio inválido.' }
     const heard = await transcribe(aiStore, settingsStore.get().assistant, wav)
     if (!heard.ok) return heard
-    const text = heard.text.replace(/\s+/g, ' ').trim()
+    // "Lumi, abre o youtube": the name only called her, the request is what follows
+    const text = stripWake(heard.text.replace(/\s+/g, ' ').trim(), wakeWords())
     if (text) void aiAgent.send(text, true)
     return { ok: true, text }
   })
@@ -856,6 +858,25 @@ function createWindow(): void {
   ipcMain.handle(IPC.aiClear, () => aiAgent.clearConversation())
   ipcMain.on(IPC.aiConfirmReply, (_e, id: unknown, ok: unknown) => {
     if (typeof id === 'string') aiAgent.replyConfirm(id, ok === true)
+  })
+  const wakeEngine = new WakeEngine(join(app.getPath('userData'), 'models'))
+  const wakeWords = (): string[] => {
+    const cfg = settingsStore.get().assistant
+    return [PERSONAS[cfg.persona].name, ...cfg.wakeWords]
+  }
+  ipcMain.handle(IPC.aiWakeStatus, () => wakeEngine.status())
+  ipcMain.handle(IPC.aiWakePrepare, async () => {
+    await wakeEngine.prepare().catch(() => undefined)
+    return wakeEngine.status()
+  })
+  ipcMain.handle(IPC.aiWakeCheck, async (_e, wav: unknown) => {
+    const none = { wake: false, hasCommand: false, text: '' }
+    if (typeof wav !== 'string' || wav.length > 4_000_000 || !settingsStore.get().assistant.wakeWord) return none
+    try {
+      return await wakeEngine.check(Buffer.from(wav, 'base64'), wakeWords())
+    } catch {
+      return none
+    }
   })
   const knownProvider = (id: unknown): id is AiProviderId => AI_PROVIDERS.some((p) => p.id === id)
   ipcMain.handle(IPC.aiSetKey, (_e, provider: unknown, key: unknown) => {

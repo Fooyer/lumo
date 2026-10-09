@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AI_PROVIDERS, PERSONAS, providerInfo, type AiKeyStatus, type AiNote, type AiProviderId, type Autonomy, type BlockedSite, type PersonaId } from '@shared/ai'
+import { AI_PROVIDERS, PERSONAS, providerInfo, type AiKeyStatus, type AiNote, type AiProviderId, type Autonomy, type BlockedSite, type PersonaId, type WakeStatus } from '@shared/ai'
 import type { Settings } from '@shared/ipc'
 import { Item, Section } from './SettingsParts'
 import MascotSvg from '../mascot/MascotSvg'
@@ -30,6 +30,8 @@ export default function AssistantSection({ settings, onChange }: Props): JSX.Ele
   const [notes, setNotes] = useState<AiNote[]>([])
   const [sample, setSample] = useState<string | null>(null)
   const [blocked, setBlocked] = useState<BlockedSite[]>([])
+  const [wake, setWake] = useState<WakeStatus | null>(null)
+  const [wakeWordsText, setWakeWordsText] = useState((settings.assistant.wakeWords ?? []).join(', '))
   const [fetched, setFetched] = useState<string[]>([])
   const [modelsNote, setModelsNote] = useState('')
 
@@ -89,6 +91,21 @@ export default function AssistantSection({ settings, onChange }: Props): JSX.Ele
     if (keys && (hasKey || !info.needsKey)) void loadModels()
   }, [a.provider, a.baseUrl, hasKey, keys === null, info.needsKey, loadModels]) // eslint-disable-line react-hooks/exhaustive-deps
   const persona = PERSONAS[a.persona]
+
+  // the first time, the local model is downloaded: show how far it is
+  useEffect(() => {
+    if (!a.wakeWord) {
+      setWake(null)
+      return
+    }
+    let alive = true
+    void window.lumo.aiWakePrepare().then((s) => alive && setWake(s))
+    const timer = setInterval(() => void window.lumo.aiWakeStatus().then((s) => alive && setWake(s)), 800)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [a.wakeWord])
 
   const hearSample = async (): Promise<void> => {
     setSample('Gerando a voz…')
@@ -152,6 +169,51 @@ export default function AssistantSection({ settings, onChange }: Props): JSX.Ele
             Ouvir {persona.name}
           </button>
           {sample && <p className="settings-hint">{sample}</p>}
+        </Item>
+        <Item keywords="palavra de ativação chamar nome lumi lux alexa hey sempre ouvindo acordar">
+          <label className="settings-toggle">
+            <input type="checkbox" checked={a.wakeWord} onChange={(e) => set({ wakeWord: e.target.checked })} />
+            Chamar pelo nome: diga "{persona.name}" e ela começa a ouvir
+          </label>
+          <p className="settings-hint">
+            O microfone fica aberto o tempo todo, mas o reconhecimento do nome roda só neste computador (um modelo de ~75 MB, baixado uma
+            vez): nada do que você fala sai daqui até ela ouvir o nome. Depois do nome, o pedido vai ao serviço de voz da sua chave, como no
+            botão do microfone. Dá para falar tudo de uma vez ("{persona.name}, abre o youtube") ou só o nome e esperar o sinal.
+          </p>
+          {a.wakeWord && wake?.state === 'downloading' && (
+            <p className="settings-hint">Baixando o modelo de voz… {Math.round(wake.progress * 100)}%</p>
+          )}
+          {a.wakeWord && wake?.state === 'error' && (
+            <p className="settings-hint" style={{ color: 'var(--danger)' }}>
+              {wake.message}
+            </p>
+          )}
+          {a.wakeWord && wake && wake.state !== 'downloading' && wake.state !== 'error' && (
+            <p className="settings-hint" style={{ color: 'var(--success)' }}>
+              Escutando o nome "{persona.name}".
+            </p>
+          )}
+          {a.wakeWord && (
+            <label className="settings-number settings-number--wide">
+              <span>Outras palavras que também a chamam (separadas por vírgula)</span>
+              <input
+                className="settings-text"
+                value={wakeWordsText}
+                placeholder="ex.: jarvis, assistente"
+                spellCheck={false}
+                onChange={(e) => setWakeWordsText(e.target.value)}
+                onBlur={() =>
+                  set({
+                    wakeWords: wakeWordsText
+                      .split(',')
+                      .map((w) => w.trim())
+                      .filter(Boolean)
+                      .slice(0, 8)
+                  })
+                }
+              />
+            </label>
+          )}
         </Item>
         <Item keywords="microfone conversa por voz mãos livres ouvir escutar">
           <label className="settings-toggle">

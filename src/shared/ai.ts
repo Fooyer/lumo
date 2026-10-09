@@ -196,6 +196,10 @@ export interface AssistantSettings {
   voice: boolean
   /** Hands-free: listen again after every answer. */
   voiceMode: boolean
+  /** Always listening (on this computer only) for her name, like "Hey Alexa": say "Lumi, ..." and she answers. */
+  wakeWord: boolean
+  /** Extra words that call her, besides her own name. */
+  wakeWords: string[]
   /** Now and then she comments on what the user is doing, like a person next to them would. */
   curiosity: boolean
   /** system: the operating system's voice, starts at once. gemini: a natural voice made by the service, takes a moment. */
@@ -214,6 +218,8 @@ export const DEFAULT_ASSISTANT: AssistantSettings = {
   voice: true,
   voiceMode: false,
   voiceEngine: 'edge',
+  wakeWord: false,
+  wakeWords: [],
   curiosity: true
 }
 
@@ -317,6 +323,21 @@ export interface VoiceSendResult {
   ok: boolean
   text?: string
   error?: string
+}
+
+export interface WakeResult {
+  /** The utterance opened with a wake word. */
+  wake: boolean
+  /** ...and something was said after it (a request in the same breath). */
+  hasCommand: boolean
+  /** What the local model heard (for debugging; never stored). */
+  text: string
+}
+
+export interface WakeStatus {
+  state: 'idle' | 'downloading' | 'ready' | 'error'
+  progress: number
+  message?: string
 }
 
 /** One piece of a streamed voice: 16-bit mono PCM (base64), or the end/failure of the stream with that id. */
