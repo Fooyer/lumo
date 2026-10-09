@@ -75,6 +75,14 @@ export function parseOpenCommand(text: string): { url: string; name: string } | 
   return null
 }
 
+/** A reply that announces the next step ("deixa eu olhar…", "vou abrir…") and stops there, without asking anything. */
+export function promisesMore(text: string): boolean {
+  const t = plain(text)
+  // a closing question hands the turn to the person: that is a clear stop, not a dropped promise
+  if (/\?[~!.…\s]*$/.test(t)) return false
+  return /\b(deixa eu|deixe me|vou (?:dar|olhar|ver|abrir|procurar|pesquisar|ler|clicar|entrar|checar|verificar|tentar|buscar|fazer|conferir|navegar|acessar|escolher|preencher|escrever|mudar|trocar)|ja volto|ja vejo|ja olho|ja abro|ja confiro|um instante|um segundinho|um momentinho|so um (?:instante|minuto|segundo|momento)|me da um (?:instante|segundo|minuto)|aguarda|aguenta ai)\b/.test(t)
+}
+
 /** Whether a reply claims that something was done (used to catch claims with no action behind them). */
 export function claimsAction(text: string): boolean {
   return /\b(abri|abrindo|ja abri|ja fiz|fiz isso|feito|pronto|prontinho|ta feito|tá feito|fechei|troquei|mudei|apontei|organizei|bloqueei|liberei|salvei|adicionei|removi|pesquisei|cliquei|escrevi|preenchi)\b/i.test(

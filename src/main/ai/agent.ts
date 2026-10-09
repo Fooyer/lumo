@@ -12,11 +12,13 @@ import type { AiStore } from './aiStore'
 import { buildSystemPrompt } from './persona'
 import { callLlm, listModels, LlmError, type LlmMessage } from './providers'
 import { remarkSystemPrompt } from './remarks'
-import { claimsAction, parseOpenCommand } from './quickActions'
+import { claimsAction, parseOpenCommand, promisesMore } from './quickActions'
 import { AiTools, settingsSummary, type ToolBridge } from './tools'
 import type { Settings } from '../../shared/ipc'
 
-const MAX_STEPS = 10
+const MAX_STEPS = 14
+/** How many times an unfinished reply may be sent back to keep going. */
+const MAX_NUDGES = 3
 const CONFIRM_TIMEOUT_MS = 60_000
 // How much of the saved conversation goes back to the model each turn.
 const CONTEXT_MESSAGES = 24
@@ -194,6 +196,7 @@ export class AiAgent {
       let finalText = ''
       let usedTool = false
       let nudged = false
+      let pushes = 0
 
       // "abra o youtube": understood with plain rules, so it happens at once and for sure.
       const quick = info.noTools ? null : parseOpenCommand(text)
@@ -251,6 +254,16 @@ export class AiAgent {
             })
             continue
           }
+          // It announced the next step and stopped: the person should not have to say "continue".
+          if (!info.noTools && pushes < MAX_NUDGES && step < MAX_STEPS - 2 && promisesMore(response.text)) {
+            pushes++
+            messages.push({ role: 'assistant', text: response.text, raw: response.raw })
+            messages.push({
+              role: 'user',
+              text: '[AVISO DO SISTEMA] Você disse que ia fazer algo e encerrou a vez sem fazer. Continue agora, chamando as ferramentas necessárias, até terminar o pedido da pessoa de uma vez. Só pare quando tiver terminado, ou quando realmente precisar de algo dela: nesse caso, diga com clareza o que falta e faça uma pergunta direta.'
+            })
+            continue
+          }
           finalText = response.text
           break
         }
@@ -267,7 +280,7 @@ export class AiAgent {
           results.push({ id: call.id, name: call.name, content: out.content })
         }
         messages.push({ role: 'tool', results })
-        if (step === MAX_STEPS - 1) finalText = '[surpresa] Fiz um monte de coisas seguidas e preciso parar um instante. Quer que eu continue?'
+        if (step === MAX_STEPS - 1) finalText = '[surpresa] Parei de propósito: já fiz muitos passos seguidos neste pedido e não terminei. Se quiser que eu continue de onde parei, é só dizer "continua".'
       }
 
       if (!finalText) finalText = '[pensando] Hmm, fiquei sem palavras. Pode repetir de outro jeito?'
