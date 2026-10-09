@@ -1056,3 +1056,12 @@ body.mascot-chat-window #root {
     transform: none;
   }
 }
+
+/* held a little askew, like something carried in a hand */
+.lm-offer--left {
+  rotate: -4deg;
+}
+
+.lm-offer--right {
+  rotate: 4deg;
+}

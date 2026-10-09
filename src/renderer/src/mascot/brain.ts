@@ -920,10 +920,10 @@ export class Brain {
   private poseOffer(p: Targets): void {
     if (!this.offering) return
     const t = this.t
-    p.armLSh = 72 + sin(t * 2.2) * 3
-    p.armRSh = 72 - sin(t * 2.2) * 3
-    p.armLEl = 28
-    p.armREl = 28
+    p.armLSh = 84 + sin(t * 2.2) * 3
+    p.armRSh = 84 - sin(t * 2.2) * 3
+    p.armLEl = 14
+    p.armREl = 14
     p.headRot = sin(t * 1.4) * 4
     p.lookX = sin(t * 0.9) * 0.6
     p.lookY = 0.1

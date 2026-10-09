@@ -729,7 +729,7 @@ export default function Mascot(): JSX.Element {
         <button
           key={`${o.host}-${i}`}
           className={`lm-offer lm-offer--${i === 0 ? 'left' : 'right'}`}
-          style={{ bottom: svgH * 0.4, [i === 0 ? 'right' : 'left']: `calc(50% + ${svgW * 0.5 - 8}px)` }}
+          style={{ bottom: svgH * 0.3, [i === 0 ? 'right' : 'left']: `calc(50% + ${svgW * 0.5 - 16}px)` }}
           title={`${o.title} (${o.host})`}
           onClick={() => {
             setOffer(null)
