@@ -2,6 +2,7 @@ import { clipboard } from 'electron'
 import type { Settings, TabLayout } from '../../shared/ipc'
 import { GESTURES, MOODS, PERSONAS, type PersonaId, type Autonomy, type Gesture, type MascotCommand, type Mood, type ToolAnim } from '../../shared/ai'
 import { isInternalUrl, normalizeUrlOrNull, searchUrl, domainOf, type Tab, type TabManager } from '../tabManager'
+import { isSearchPage } from './quickActions'
 import type { BookmarksManager } from '../bookmarksManager'
 import type { HistoryManager } from '../historyManager'
 import type { DownloadsManager } from '../downloadsManager'
@@ -177,6 +178,25 @@ export class AiTools {
     return { tab, wc }
   }
 
+  /** What a tab really shows now, to be told back to the model: the address it landed on, and whether that is only a search. */
+  private landed(tabId: string): string {
+    const tab = this.b.tabs.list().find((t) => t.id === tabId)
+    if (!tab) return ''
+    const search = isSearchPage(tab.url)
+    return ` VERIFICAÇÃO: a aba agora está em ${tab.url} (título: "${tab.title || 'sem título'}").${
+      search
+        ? ' ATENÇÃO: isto é uma PÁGINA DE RESULTADOS DE BUSCA, não o site que a pessoa quer. NÃO diga que abriu o site: clique no resultado certo (read_page + click_element) ou abra o endereço exato com open_tab (ex.: github.com/usuario/repositorio).'
+        : ''
+    }`
+  }
+
+  /** The active tab's address after the last actions, and whether it is just a search (null when it cannot be told). */
+  activeLanding(): { url: string; search: boolean } | null {
+    const tab = this.b.tabs.list().find((t) => t.id === this.b.tabs.getActiveId())
+    if (!tab || tab.incognito) return null
+    return { url: tab.url, search: isSearchPage(tab.url) }
+  }
+
   private async waitForView(tab: Tab): Promise<Electron.WebContents> {
     for (let i = 0; i < 20 && !tab.view; i++) await new Promise((r) => setTimeout(r, 100))
     if (!tab.view) throw new ToolError('A aba ainda não carregou.')
@@ -249,7 +269,7 @@ export class AiTools {
           const id = b.tabs.create(target, { activate: !background, incognito: bool(a.private) === true })
           const tab = b.tabs.list().find((t) => t.id === id)
           if (tab?.view && !background) await settle(tab.view.webContents)
-          return `Aba aberta (id=${id}) em ${target}${tab?.title ? ` — título: ${tab.title}` : ''}.`
+          return `Aba aberta (id=${id}) pedindo ${target}.${this.landed(id)}`
         }
       },
       {
@@ -280,7 +300,7 @@ export class AiTools {
           const wc = tab.view?.webContents ?? (await this.waitForView(tab))
           await settle(wc)
           this.elements.delete(tab.id)
-          return `Carregado: ${tab.title || '(sem título)'} — ${tab.url}`
+          return `Carregado.${this.landed(tab.id)}`
         }
       },
       {
@@ -439,7 +459,7 @@ export class AiTools {
           const r = await clickElement(wc, el.id)
           if (!r.ok) throw new ToolError(r.error)
           this.elements.delete(tab.id)
-          return `${r.message} Chame read_page para ver o resultado.`
+          return `${r.message}${this.landed(tab.id)} Chame read_page para ver o resultado.`
         }
       },
       {

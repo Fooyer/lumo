@@ -264,6 +264,23 @@ export class AiAgent {
             })
             continue
           }
+          // It says it opened something while the tab is only showing a search: check the address, not the claim.
+          const landing = this.tools.activeLanding()
+          if (
+            landing?.search &&
+            usedTool &&
+            pushes < MAX_NUDGES &&
+            claimsAction(response.text) &&
+            !/\b(resultado|busca|pesquis|procur)/i.test(response.text.normalize('NFD').replace(/[\u0300-\u036f]/g, ''))
+          ) {
+            pushes++
+            messages.push({ role: 'assistant', text: response.text, raw: response.raw })
+            messages.push({
+              role: 'user',
+              text: `[AVISO DO SISTEMA] Você disse que abriu o que a pessoa pediu, mas a aba ativa está em ${landing.url}, que é só uma página de resultados de busca. Termine de verdade: leia a página e clique no resultado certo, ou abra o endereço exato com open_tab. Só confirme quando a URL da aba for do site pedido.`
+            })
+            continue
+          }
           finalText = response.text
           break
         }

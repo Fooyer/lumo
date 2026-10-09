@@ -83,6 +83,19 @@ export function promisesMore(text: string): boolean {
   return /\b(deixa eu|deixe me|vou (?:dar|olhar|ver|abrir|procurar|pesquisar|ler|clicar|entrar|checar|verificar|tentar|buscar|fazer|conferir|navegar|acessar|escolher|preencher|escrever|mudar|trocar)|ja volto|ja vejo|ja olho|ja abro|ja confiro|um instante|um segundinho|um momentinho|so um (?:instante|minuto|segundo|momento)|me da um (?:instante|segundo|minuto)|aguarda|aguenta ai)\b/.test(t)
 }
 
+/** A search engine's results page: where a search lands, which is not the site the person asked for. */
+export function isSearchPage(url: string): boolean {
+  try {
+    const u = new URL(url)
+    const host = u.hostname.replace(/^www\./, '')
+    if (host === 'duckduckgo.com' || host === 'search.brave.com' || host === 'ecosia.org' || host === 'startpage.com') return u.searchParams.has('q') || u.pathname.startsWith('/search')
+    if (/^(google|bing|yahoo)\./.test(host) || host.endsWith('.google.com')) return u.pathname.startsWith('/search') || u.searchParams.has('q')
+    return false
+  } catch {
+    return false
+  }
+}
+
 /** Whether a reply claims that something was done (used to catch claims with no action behind them). */
 export function claimsAction(text: string): boolean {
   return /\b(abri|abrindo|ja abri|ja fiz|fiz isso|feito|pronto|prontinho|ta feito|tá feito|fechei|troquei|mudei|apontei|organizei|bloqueei|liberei|salvei|adicionei|removi|pesquisei|cliquei|escrevi|preenchi)\b/i.test(
